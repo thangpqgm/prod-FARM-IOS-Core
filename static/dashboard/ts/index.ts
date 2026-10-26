@@ -42,6 +42,7 @@ interface Account {
     personality: Personality;
     minutesPerSession: number;
     keywordsPerSession: number;
+    warmupMinutes: number;
     forYouMinutes: number;
     dailyTimes: string[];
     nicheFilter: boolean;
@@ -308,7 +309,7 @@ function buildEditor(account: Account | undefined): HTMLTableRowElement {
         ? { ...account, keywords: [...account.keywords], dailyTimes: [...account.dailyTimes] }
         : {
             deviceUdid: devices.find((device) => device.connected)?.udid ?? devices[0]?.udid ?? '', handle: '',
-            keywords: [], personality: 'casual', minutesPerSession: 15, keywordsPerSession: 2, forYouMinutes: 3,
+            keywords: [], personality: 'casual', minutesPerSession: 15, keywordsPerSession: 2, warmupMinutes: 0, forYouMinutes: 3,
             dailyTimes: [], nicheFilter: true, enabled: true,
         };
     const message = el('span', { class: 'run-meta', 'aria-live': 'polite' });
@@ -382,7 +383,9 @@ function buildEditor(account: Account | undefined): HTMLTableRowElement {
                 el('small', {}, 'Để trống nếu chỉ muốn bấm chạy tay.')),
             field('Thời gian search (phút)', numberInput(draft.minutesPerSession, 1, 180, (value) => { draft.minutesPerSession = value; })),
             field('Số keyword mỗi phiên', numberInput(draft.keywordsPerSession, 1, 10, (value) => { draft.keywordsPerSession = value; })),
-            field('Lướt For You sau đó (phút)', numberInput(draft.forYouMinutes, 0, 60, (value) => { draft.forYouMinutes = value; }), '0 = bỏ qua.'),
+            field('Lướt For You trước khi search (phút)', numberInput(draft.warmupMinutes, 0, 30, (value) => { draft.warmupMinutes = value; }),
+                '0 = vào app là search luôn. Lớn hơn 0: lướt For You trước, rồi bấm search ngay từ feed đang xem.'),
+            field('Lướt For You sau khi search (phút)', numberInput(draft.forYouMinutes, 0, 60, (value) => { draft.forYouMinutes = value; }), '0 = bỏ qua.'),
             field('Kiểu tương tác', personalitySelect),
             el('div', { class: 'field wide checks' },
                 checkbox('Lọc theo niche: chỉ like/save video có caption chứa keyword (đọc bằng OCR)', draft.nicheFilter, (value) => { draft.nicheFilter = value; }),

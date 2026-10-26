@@ -35,12 +35,18 @@ test('accounts: create, validate, update, list with niche keywords, delete', asy
     assert.deepEqual(account.dailyTimes, ['08:00', '20:00']);
     assert.equal(account.nicheFilter, true);
     assert.equal(account.personality, 'casual');
+    assert.equal(account.warmupMinutes, 0, 'searches straight away unless a warm-up is set');
 
     const duplicate = await inject(app, { method: 'POST', url: '/api/accounts', payload: { deviceUdid: 'udid-a', handle: '@skin_acc', keywords: ['a'] } });
     assert.equal(duplicate.statusCode, 409);
 
     const badTime = await inject(app, { method: 'PATCH', url: `/api/accounts/${account.id}`, payload: { dailyTimes: ['8am'] } });
     assert.equal(badTime.statusCode, 400);
+
+    const tooLongWarmup = await inject(app, { method: 'PATCH', url: `/api/accounts/${account.id}`, payload: { warmupMinutes: 31 } });
+    assert.equal(tooLongWarmup.statusCode, 400);
+    const warmup = await inject(app, { method: 'PATCH', url: `/api/accounts/${account.id}`, payload: { warmupMinutes: 3 } });
+    assert.equal(warmup.json().warmupMinutes, 3);
 
     const updated = await inject(app, {
         method: 'PATCH', url: `/api/accounts/${account.id}`,

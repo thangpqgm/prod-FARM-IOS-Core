@@ -211,7 +211,8 @@ async function scrollFeed(activeDriver: Browser, keyword: string | null, deadlin
 
 const keywords = pickKeywords(account.keywords, account.keywordsPerSession);
 console.log(`Session ${session.id}: ${account.handle} on ${device.name}, keywords=${JSON.stringify(keywords)}, `
-    + `${account.minutesPerSession} min search + ${account.forYouMinutes} min For You, personality=${account.personality}, `
+    + `${account.warmupMinutes} min warm-up + ${account.minutesPerSession} min search + ${account.forYouMinutes} min For You, `
+    + `personality=${account.personality}, `
     + `nicheFilter=${account.nicheFilter}`);
 
 try {
@@ -239,12 +240,25 @@ try {
         switcherTriggerY: tiktok.accountSwitcher.y,
     });
 
+    // Warm-up: scroll For You for a while first, then search from that same
+    // feed, instead of opening the app straight into Search.
+    let onFeed = false;
+    if (!stopRequested && account.warmupMinutes > 0) {
+        console.log(`Warming up on the For You feed for ${account.warmupMinutes} min before searching`);
+        await relaunchTikTok(driver, searchOptions);
+        await locateEngagementControls();
+        await scrollFeed(driver, null, Date.now() + account.warmupMinutes * 60_000);
+        onFeed = true;
+    }
+
     const perKeywordMs = (account.minutesPerSession * 60_000) / Math.max(1, keywords.length);
     let searchFailures = 0;
     for (const keyword of keywords) {
         if (stopRequested) break;
+        const relaunch = !onFeed;
+        onFeed = false;
         try {
-            await openSearchResults(driver, remoteControl, udid, keyword, searchOptions);
+            await openSearchResults(driver, remoteControl, udid, keyword, { ...searchOptions, relaunch });
         } catch (error) {
             searchFailures += 1;
             const screenshot = await saveFailureScreenshot(`search-${searchFailures}`);

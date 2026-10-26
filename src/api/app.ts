@@ -109,6 +109,7 @@ export function parseAccountInput(body: Record<string, unknown>, partial: boolea
     }
     if (has('minutesPerSession')) input.minutesPerSession = integerInRange(body.minutesPerSession, 'Thời lượng', 1, 180);
     if (has('keywordsPerSession')) input.keywordsPerSession = integerInRange(body.keywordsPerSession, 'Số keyword mỗi phiên', 1, 10);
+    if (has('warmupMinutes')) input.warmupMinutes = integerInRange(body.warmupMinutes, 'Thời gian lướt trước khi search', 0, 30);
     if (has('forYouMinutes')) input.forYouMinutes = integerInRange(body.forYouMinutes, 'Thời gian For You', 0, 60);
     if (has('dailyTimes')) {
         if (!Array.isArray(body.dailyTimes) || !body.dailyTimes.every((time) => typeof time === 'string' && TIME_PATTERN.test(time))) {

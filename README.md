@@ -56,14 +56,16 @@ Lần đầu cho một máy:
 ### Một phiên nuôi diễn ra thế nào
 
 1. Mở khóa máy, mở TikTok, chuyển sang acc cần nuôi bằng OCR.
-2. Chọn ngẫu nhiên *N* keyword của acc (theo "Số keyword mỗi phiên").
-3. Với mỗi keyword: mở lại TikTok → bấm kính lúp → gõ keyword → ở tab Top, mở bài trên cùng bên trái (đọc từ cây element) → lướt tiếp cho đến hết phần thời gian của keyword đó.
-4. Lướt For You thêm vài phút (đặt 0 để bỏ qua bước này).
+2. *(Nếu "Lướt For You trước khi search" > 0)* Lướt For You vài phút như bình thường, rồi bấm search ngay từ feed đang xem, không mở lại app. Đặt 0 thì vào app là search luôn.
+3. Chọn ngẫu nhiên *N* keyword của acc (theo "Số keyword mỗi phiên").
+4. Với mỗi keyword: mở lại TikTok (trừ keyword đầu ngay sau bước lướt trước) → bấm kính lúp → gõ keyword → ở tab Top, mở bài trên cùng bên trái (đọc từ cây element) → lướt tiếp cho đến hết phần thời gian của keyword đó.
+5. Lướt For You thêm vài phút (đặt 0 để bỏ qua bước này).
 
 Mỗi video được ghi vào DB gồm caption, có khớp niche không, đã like/save chưa. Dashboard hiển thị tỉ lệ khớp niche của từng phiên.
 
 | Thiết lập | Ý nghĩa |
 | --- | --- |
+| Lướt For You trước khi search | Số phút lướt For You trước keyword đầu tiên (0–30). Keyword đầu được search ngay từ feed đó; các keyword sau vẫn mở lại app như cũ. |
 | Kiểu tương tác | `Lướt nhanh` / `Bình thường` / `Tương tác nhiều`: thời gian xem và tỉ lệ like/save. |
 | Lọc theo niche | Bật: video có caption không chứa keyword thì chỉ lướt qua, không like/save. So khớp bỏ dấu tiếng Việt và hiểu hashtag viết liền (`#reviewmypham`). |
 | Giờ tự chạy | Giờ theo đồng hồ của máy Mac. Nếu đến giờ mà máy đang bận hoặc offline, bot thử lại trong `NURTURE_RUN_WINDOW_MINUTES` phút (mặc định 120). Mỗi khung giờ chỉ chạy một lần. |

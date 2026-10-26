@@ -25,6 +25,11 @@ export interface SearchOptions {
     pause: (ms: number) => Promise<void>;
 }
 
+export interface OpenSearchOptions extends SearchOptions {
+    /** false: the For You feed is already on screen (after a warm-up scroll), so search from it without relaunching. */
+    relaunch?: boolean;
+}
+
 // Result cell label: "<caption>. Photo|Video. [badge.] <date>. <author>[. Verified account]. <N> likes."
 // The Photo/Video word is unreliable — TikTok labels videos "Photo" too — so it only helps match the shape.
 const RESULT_CELL = /^[\s\S]*\. (?:Photo|Video)\. .+\. [\d.,]+[KMB]? likes?\.$/;
@@ -102,18 +107,19 @@ async function waitForElements<T>(
 }
 
 /**
- * From a fresh launch: open Search, search `keyword` and open a result from
- * the Top tab (the top-left post), leaving it open so the caller can scroll on.
+ * From the video feed (a fresh launch by default): open Search, search
+ * `keyword` and open a result from the Top tab (the top-left post), leaving
+ * it open so the caller can scroll on.
  */
 export async function openSearchResults(
     driver: Browser,
     remote: WdaRemoteControl,
     udid: string,
     keyword: string,
-    options: SearchOptions,
+    options: OpenSearchOptions,
 ): Promise<void> {
     const { pause } = options;
-    await relaunchTikTok(driver, options);
+    if (options.relaunch ?? true) await relaunchTikTok(driver, options);
 
     const { screenSize, scale } = await remote.getScreenInfo(udid);
     const icon = searchIconPoint(screenSize);

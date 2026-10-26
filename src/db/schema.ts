@@ -14,6 +14,8 @@ export const accounts = sqliteTable('accounts', {
     personality: text('personality').$type<Personality>().notNull().default('casual'),
     minutesPerSession: integer('minutes_per_session').notNull().default(15),
     keywordsPerSession: integer('keywords_per_session').notNull().default(2),
+    /** Minutes of the For You feed before the first search, so a session doesn't open the app straight into Search. */
+    warmupMinutes: integer('warmup_minutes').notNull().default(0),
     /** Minutes of the For You feed after the searches, to see whether the niche stuck. */
     forYouMinutes: integer('for_you_minutes').notNull().default(3),
     /** Host-local "HH:MM" start times; empty means manual runs only. */
