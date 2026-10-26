@@ -57,7 +57,7 @@ Lần đầu cho một máy:
 
 1. Mở khóa máy, mở TikTok, chuyển sang acc cần nuôi bằng OCR.
 2. Chọn ngẫu nhiên *N* keyword của acc (theo "Số keyword mỗi phiên").
-3. Với mỗi keyword: mở lại TikTok → bấm kính lúp → gõ keyword → ở tab Top, mở ô **video** đầu tiên (đọc từ cây element) → lướt tiếp cho đến hết phần thời gian của keyword đó.
+3. Với mỗi keyword: mở lại TikTok → bấm kính lúp → gõ keyword → ở tab Top, mở bài trên cùng bên trái (đọc từ cây element) → lướt tiếp cho đến hết phần thời gian của keyword đó.
 4. Lướt For You thêm vài phút (đặt 0 để bỏ qua bước này).
 
 Mỗi video được ghi vào DB gồm caption, có khớp niche không, đã like/save chưa. Dashboard hiển thị tỉ lệ khớp niche của từng phiên.

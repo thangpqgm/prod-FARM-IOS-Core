@@ -61,11 +61,11 @@ test('parsePageSource keeps visible elements and decodes XML entities', () => {
         'Week 3 on glp1 & my "results"\n#weightloss. Photo. Oct 2. anna.fit. 1.2K likes.');
 });
 
-test('resultCells finds result tiles in reading order and pickResultCell prefers a video', () => {
+test('resultCells finds result tiles in reading order and pickResultCell takes the top-left one', () => {
     const cells = resultCells(parsePageSource(RESULTS_SOURCE));
     assert.deepEqual(cells.map(({ label }) => label.split('.')[0]), ['Week 3 on glp1 & my "results"\n#weightloss', 'What I eat', 'Below']);
-    assert.equal(pickResultCell(cells)?.label.startsWith('What I eat'), true, 'the top-left photo post is skipped');
-    assert.equal(pickResultCell(cells.slice(0, 1))?.label.startsWith('Week 3'), true, 'a photo only when no video');
+    // TikTok labels videos "Photo" too, so the label's kind is ignored.
+    assert.equal(pickResultCell(cells)?.label.startsWith('Week 3'), true);
     assert.equal(pickResultCell([]), undefined);
 });
 

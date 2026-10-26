@@ -26,7 +26,8 @@ export interface SearchOptions {
 }
 
 // Result cell label: "<caption>. Photo|Video. [badge.] <date>. <author>[. Verified account]. <N> likes."
-const RESULT_CELL = /^(?<caption>[\s\S]*)\. (?<kind>Photo|Video)\. (?<rest>.+)\. (?<likes>[\d.,]+[KMB]?) likes?\.$/;
+// The Photo/Video word is unreliable — TikTok labels videos "Photo" too — so it only helps match the shape.
+const RESULT_CELL = /^[\s\S]*\. (?:Photo|Video)\. .+\. [\d.,]+[KMB]? likes?\.$/;
 const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 
 function decodeXml(value: string): string {
@@ -63,9 +64,9 @@ export function resultCells(elements: readonly ScreenElement[]): ScreenElement[]
         .sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
-/** The first video result (the feed loop that follows scrolls videos); a photo post only if there is no video. */
+/** The top-left result. Its Photo/Video label can't tell a video from a photo post, so no filtering on it. */
 export function pickResultCell(cells: readonly ScreenElement[]): ScreenElement | undefined {
-    return cells.find((cell) => RESULT_CELL.exec(cell.label)?.groups?.kind === 'Video') ?? cells[0];
+    return cells[0];
 }
 
 /** Where the magnifier sits on the feed: 30pt from the right, lower on notched (≥812pt tall) screens. */
@@ -102,7 +103,7 @@ async function waitForElements<T>(
 
 /**
  * From a fresh launch: open Search, search `keyword` and open a result from
- * the Top tab, leaving the result playing so the caller can scroll on.
+ * the Top tab (the top-left post), leaving it open so the caller can scroll on.
  */
 export async function openSearchResults(
     driver: Browser,
