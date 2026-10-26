@@ -1,4 +1,4 @@
-import { spawn, type SpawnOptions } from 'node:child_process';
+import { spawn, spawnSync, type SpawnOptions } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,6 @@ function run(command: string, args: string[], options: SpawnOptions = {}): Promi
     });
 }
 
-const workspaceRoot = process.cwd();
 const packageRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const driverPath = path.resolve(process.env.XCUITEST_DRIVER_PATH
     ?? '.appium2/node_modules/appium-xcuitest-driver');
@@ -38,35 +37,24 @@ const touchCommandsPath = path.join(
     wdaRoot,
     'WebDriverAgentLib/Commands/FBTouchActionCommands.m',
 );
-const runnerInfoPlistPath = path.join(wdaRoot, 'WebDriverAgentRunner/Info.plist');
-const customCommandsPath = path.join(wdaRoot, 'WebDriverAgentLib/Commands/FBCustomCommands.m');
-const patchPath = path.join(
-    packageRoot,
-    'Patches/appium-webdriveragent-8.9.1-absolute-touch.patch',
-);
-const buttonsPatchPath = path.join(
-    packageRoot,
-    'Patches/appium-webdriveragent-8.9.1-sessionless-buttons.patch',
-);
+// Ported to the WDA bundled with the pinned driver (xcuitest 12.1.4); see Patches/README.md.
+const TESTED_WDA_VERSION = '16.1.1';
+const patchPath = path.join(packageRoot, 'Patches/wda-16.1.1-farm.patch');
 
-await Promise.all([
-    access(projectPath), access(touchCommandsPath), access(runnerInfoPlistPath), access(customCommandsPath),
-    access(patchPath), access(buttonsPatchPath),
-]);
-const touchCommands = await readFile(touchCommandsPath, 'utf8');
-const runnerInfoPlist = await readFile(runnerInfoPlistPath, 'utf8');
-if (touchCommands.includes('FBImportMedia') && runnerInfoPlist.includes('NSPhotoLibraryAddUsageDescription')) {
-    console.log('WDA absolute-touch and Photos-import patch is already applied');
+await Promise.all([access(projectPath), access(touchCommandsPath), access(patchPath)]);
+const wdaVersion = (JSON.parse(await readFile(path.join(wdaRoot, 'package.json'), 'utf8')) as { version?: string }).version;
+if ((await readFile(touchCommandsPath, 'utf8')).includes('/wda/absolute-actions')) {
+    console.log('WDA absolute-touch / Photos-import / sessionless-button patch is already applied');
 } else {
-    await run('/usr/bin/patch', ['-p0', '-i', patchPath], { cwd: workspaceRoot });
-    console.log('Applied WDA absolute-touch patch');
-}
-const customCommands = await readFile(customCommandsPath, 'utf8');
-if (customCommands.includes('POST:@"/wda/pressButton"].withoutSession')) {
-    console.log('WDA sessionless device-button patch is already applied');
-} else {
-    await run('/usr/bin/patch', ['-p0', '-i', buttonsPatchPath], { cwd: workspaceRoot });
-    console.log('Applied WDA sessionless device-button patch');
+    // Dry-run first: a patch that only fits with offsets or fuzz lands in the
+    // wrong place and the WDA build fails, so refuse instead of half-applying.
+    const dryRun = spawnSync('/usr/bin/patch', ['-p1', '-N', '--dry-run', '-d', wdaRoot, '-i', patchPath], { encoding: 'utf8' });
+    if (dryRun.status !== 0 || /offset|fuzz/i.test(dryRun.stdout)) {
+        throw new Error(`Patches/wda-16.1.1-farm.patch does not fit WDA ${wdaVersion} (tested on ${TESTED_WDA_VERSION}). `
+            + `Re-run \`npm run setup\` to reinstall the pinned driver.\n${dryRun.stdout}${dryRun.stderr}`);
+    }
+    await run('/usr/bin/patch', ['-p1', '-N', '-d', wdaRoot, '-i', patchPath]);
+    console.log(`Applied the WDA patch to WebDriverAgent ${wdaVersion}`);
 }
 
 const developerDir = resolveDeveloperDir();

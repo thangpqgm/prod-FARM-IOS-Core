@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, lt, sql } from 'drizzle-orm';
 
 import type { FarmDatabase } from './client.js';
 import {
@@ -98,6 +98,11 @@ export class FarmRepository {
             .set({ status, finishedAt: new Date(), error: error ?? null })
             .where(and(eq(sessions.id, id), eq(sessions.status, 'running')))
             .run();
+    }
+
+    /** Deletes per-video rows older than `before`; session rows (and their counters) are kept. */
+    pruneInteractions(before: Date): number {
+        return this.db.delete(interactions).where(lt(interactions.at, before)).run().changes;
     }
 
     /** Sessions left "running" by a crash of the process that owned them. */

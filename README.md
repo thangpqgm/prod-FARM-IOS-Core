@@ -103,6 +103,13 @@ npm run check                       # typecheck + test
 | `logs/` | `appium.log`, `wda-service.log`, `session-<id>.log` (log từng phiên, xem được từ dashboard). |
 | `.env` | Cấu hình, xem `.env.example`. |
 
+**Dung lượng không tăng mãi:** `npm start` tự dọn lúc khởi động và mỗi 6 giờ:
+- Xóa các dòng `interactions` và file `session-*.log` / `session-*.png` cũ hơn `FARM_RETENTION_DAYS` ngày (mặc định 30; đặt `0` để giữ hết).
+- Bảng `sessions` được giữ lại (mỗi phiên ~200 byte) để vẫn xem được lịch sử và số liệu.
+- `appium.log` và `wda-service.log` vượt 10 MB thì được chép sang `.1` rồi làm rỗng.
+
+Với 10 acc × 2 phiên/ngày, `farm.db` đứng ở khoảng 20 MB và `logs/` khoảng 40 MB.
+
 Muốn đổi schema DB thì sửa `src/db/schema.ts`, chạy `npm run db:generate`. Migration tự áp dụng khi chạy `npm start`.
 
 ## Chuẩn bị Xcode và iPhone (làm một lần)

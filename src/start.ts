@@ -11,6 +11,7 @@ import { createApp } from './api/app.js';
 import { openDatabase, databasePath } from './db/client.js';
 import { FarmRepository } from './db/repository.js';
 import { DeviceRegistrationService } from './devices/registration.js';
+import { pruneOldData, retentionDays, rotateLogIfLarge } from './nurture/retention.js';
 import { logDirectory, NurtureRunner } from './nurture/runner.js';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -79,6 +80,19 @@ const app = await createApp({ repository, runner, registrations, dashboard: true
 await app.listen({ host, port });
 runner.startScheduler();
 
+// Disk stays flat: old per-video rows, session logs/screenshots and oversized process logs are trimmed.
+async function housekeeping(): Promise<void> {
+    const days = retentionDays();
+    const pruned = await pruneOldData(repository, logDirectory(), days);
+    if (pruned.interactions || pruned.files) {
+        console.log(`Cleaned data older than ${days} days: ${pruned.interactions} video rows, ${pruned.files} log files`);
+    }
+    for (const name of ['appium', 'wda-service']) await rotateLogIfLarge(path.join(logDirectory(), `${name}.log`));
+}
+const runHousekeeping = () => void housekeeping().catch((error) => console.error('Housekeeping failed', error));
+runHousekeeping();
+const housekeepingTimer = setInterval(runHousekeeping, 6 * 60 * 60 * 1000);
+
 const address = app.server.address() as AddressInfo;
 const shownHost = host.includes(':') ? `[${host}]` : host;
 const shownPath = (file: string) => {
@@ -99,6 +113,7 @@ async function shutdown(signal: string): Promise<void> {
     if (stopping) return;
     stopping = true;
     console.log(`\nĐang dừng (${signal})…`);
+    clearInterval(housekeepingTimer);
     await runner.close();
     await app.close();
     await registrations.close();

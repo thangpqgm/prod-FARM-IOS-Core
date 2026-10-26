@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const XCUITEST_DRIVER = 'xcuitest@7.26.3';
+const XCUITEST_DRIVER = 'xcuitest@12.1.4';
 const appiumEnv = { ...process.env, APPIUM_HOME: path.join(root, '.appium2') };
 const appium = path.join(root, 'node_modules/appium/index.js');
 const problems = [];
@@ -41,13 +41,19 @@ if (existsSync(path.join(root, '.env'))) {
 
 step(`Appium iOS driver (${XCUITEST_DRIVER})`);
 const installed = spawnSync(process.execPath, [appium, 'driver', 'list', '--installed', '--json'], { env: appiumEnv, encoding: 'utf8' });
-let hasDriver = false;
+let installedVersion;
 try {
-    hasDriver = 'xcuitest' in JSON.parse(installed.stdout || '{}');
+    installedVersion = JSON.parse(installed.stdout || '{}').xcuitest?.version;
 } catch { /* not JSON — treat as not installed */ }
-if (hasDriver) {
+const pinnedVersion = XCUITEST_DRIVER.split('@')[1];
+if (installedVersion === pinnedVersion) {
     console.log('  Already installed');
 } else {
+    // The WDA patch in Patches/ only fits the WDA bundled with the pinned driver.
+    if (installedVersion) {
+        console.log(`  Replacing xcuitest ${installedVersion} with the pinned ${pinnedVersion}`);
+        spawnSync(process.execPath, [appium, 'driver', 'uninstall', 'xcuitest'], { env: appiumEnv, stdio: 'inherit' });
+    }
     const result = spawnSync(process.execPath, [appium, 'driver', 'install', XCUITEST_DRIVER], { env: appiumEnv, stdio: 'inherit' });
     if (result.status !== 0) problems.push('Installing the Appium XCUITest driver failed — re-run `npm run setup`');
 }
