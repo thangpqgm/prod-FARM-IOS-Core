@@ -1,12 +1,10 @@
-import { inject } from './support.js';
+import { createTestApp, inject } from './support.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { PluginRegistry } from '../src/registry.js';
-import type { SchedulerRepository } from '../src/scheduler/repository.js';
 
 // One devices.json path for the whole file — `src/devices/registry.ts` resolves
 // DEVICES_CONFIG_PATH once, at first import, so it must be set before any of the
@@ -18,15 +16,10 @@ delete process.env.IOS_PASSCODE;
 const seed = (devices: unknown[]) => writeFile(configPath, JSON.stringify(devices));
 const onDisk = async () => JSON.parse(await readFile(configPath, 'utf8')) as Array<{ udid: string; passcode?: string }>;
 
-const scheduler = {
-    async activeExecution() { return null; },
-    async listSchedules() { return []; },
-} as unknown as SchedulerRepository;
 
 test('the passcode lives in devices.json and never leaves through the API', async (context) => {
     await seed([{ name: 'Phone', udid: 'udid-1', wdaLocalPort: 8100, mjpegLocalPort: 9100, pluginData: {} }]);
-    const { createApp } = await import('../src/api/app.js');
-    const app = await createApp({ plugins: new PluginRegistry([]), scheduler });
+    const { app } = await createTestApp();
     context.after(() => app.close());
 
     const set = await inject(app, {

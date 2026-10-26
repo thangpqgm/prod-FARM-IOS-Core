@@ -1,15 +1,15 @@
-import cookie from '@fastify/cookie';
-import formbody from '@fastify/formbody';
-import multipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import crypto from 'node:crypto';
-import { mkdir, open, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 
-import { discoverConnectedDevices } from '../devices/discovery.js';
-import { loadRegisteredDevices, mutateRegisteredDevices, saveRegisteredDevices, redactDevice, PASSCODE_PATTERN, type RegisteredDevice } from '../devices/registry.js';
+import type { AccountInput, FarmRepository } from '../db/repository.js';
+import type { Personality } from '../db/schema.js';
+import { discoverConnectedDevices, type Device } from '../devices/discovery.js';
+import { loadRegisteredDevices, mutateRegisteredDevices, redactDevice, PASSCODE_PATTERN, type RegisteredDevice } from '../devices/registry.js';
 import {
     CALIBRATABLE_POINTS, POINT_LABELS, coordinatesForProfile, resolveDeviceCoordinates, validateCoordinateOverrides,
 } from '../devices/coordinates.js';
@@ -20,51 +20,38 @@ import type {
 import { type RemoteAction } from '../devices/wda-remote.js';
 import { requestWdaService } from '../devices/wda-service-client.js';
 import type { DeviceConnectionStatus } from '../devices/connection-manager.js';
-import type { AuthProvider, PluginNavLink } from '../plugin.js';
-import type { PluginRegistry } from '../registry.js';
-import type { CreateTaskInput, JsonObject, ScheduleTiming } from '../types.js';
-import { ScheduleTransitionError, type SchedulerRepository } from '../scheduler/repository.js';
+import { parseKeywordList } from '../nurture/niche.js';
+import { RunnerError, sessionLogPath, type NurtureControl } from '../nurture/runner.js';
+import { TIME_PATTERN } from '../nurture/schedule.js';
 
 export interface CreateAppOptions {
-    plugins: PluginRegistry;
-    scheduler: SchedulerRepository;
-    authProvider?: AuthProvider | null;
-    dashboardTheme?: DashboardTheme;
+    repository: FarmRepository;
+    runner: NurtureControl;
+    /** Serve the HTML dashboard from static/dashboard (off in API-only tests). */
+    dashboard?: boolean;
     registrations?: DeviceRegistrationManager;
     logger?: boolean;
+    /** Device discovery; injectable so tests don't need usbmuxd. */
+    discoverDevices?: () => Promise<Device[]>;
 }
 
-export interface DashboardTheme {
-    rootDirectory: string;
-    renderDevice?(template: string, device: RegisteredDevice): string;
-}
-
-interface LoadedDashboardTheme {
+interface LoadedDashboard {
     indexHtml: string;
     deviceHtml: string;
-    tasksHtml: string;
-    styles: string;
-    deviceScript: string;
-    tasksScript: string;
     registerDeviceHtml: string;
+    styles: string;
+    indexScript: string;
+    deviceScript: string;
     registerDeviceScript: string;
     htmx: string;
 }
 
-function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
+const DASHBOARD_ROOT = fileURLToPath(new URL('../../static/dashboard/', import.meta.url));
+const PERSONALITIES: readonly Personality[] = ['skimmer', 'casual', 'engaged'];
 
 /** Thrown inside route bodies / registry mutations; mapped to its status by setErrorHandler. */
 function httpError(statusCode: number, message: string): Error & { statusCode: number } {
     return Object.assign(new Error(message), { statusCode });
-}
-
-function csrfBlocked(reply: FastifyReply): FastifyReply {
-    return reply.code(403).send({
-        error: 'Cross-origin write blocked. Send an Authorization: Bearer token for API clients, '
-            + 'or add the origin to PHONE_FARM_TRUSTED_ORIGINS.',
-    });
 }
 
 function escapeHtml(value: unknown): string {
@@ -77,32 +64,74 @@ function escapeHtml(value: unknown): string {
 // PHONE_FARM_BRAND_URL; the text is fixed.
 const FOOTER_HTML = `Built by <a href="${escapeHtml(process.env.PHONE_FARM_BRAND_URL ?? 'https://agniverse.co')}" target="_blank" rel="noopener">Agniverse</a>, with love and curry &#10084;&#65039;`;
 
-function page(title: string, body: string, logoutPath?: string, navLinks: readonly PluginNavLink[] = []): string {
-    const logout = logoutPath ? `<a href="${escapeHtml(logoutPath)}" style="float:right;margin-right:0">Log out</a>` : '';
-    const extra = navLinks.map((link) => `<a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join('');
-    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)}</title><style>
-body{font:15px system-ui,sans-serif;margin:0;background:#f6f7f9;color:#17202a}nav{padding:16px 24px;background:#111827;color:white}nav a{color:white;margin-right:18px}main{max-width:1100px;margin:24px auto;padding:0 20px}.card{background:white;border:1px solid #dde2e8;border-radius:10px;padding:18px;margin:14px 0}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px;border-bottom:1px solid #e5e7eb}code{font-size:12px}.muted{color:#64748b}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}button,.button{background:#2563eb;color:white;border:0;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}input,select,textarea{padding:8px;border:1px solid #cbd5e1;border-radius:6px}</style></head>
-<body><nav><a href="/">Devices</a><a href="/tasks">Tasks</a><a href="/docs">API</a>${extra}${logout}</nav><main>${body}</main><footer style="max-width:1100px;margin:24px auto;padding:16px 20px;color:#94a3b8;font-size:12px">${FOOTER_HTML}</footer></body></html>`;
+function integerInRange(value: unknown, name: string, min: number, max: number): number {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+        throw httpError(400, `${name} phải là số nguyên từ ${min} đến ${max}`);
+    }
+    return value;
 }
 
-async function registeredWithStatus() {
-    const [registered, connected] = await Promise.all([loadRegisteredDevices(), discoverConnectedDevices()]);
-    const online = new Map(connected.map((device) => [device.udid, device]));
-    return registered.map((device) => ({
-        ...redactDevice(device),
-        connected: device.disabled ? null : online.get(device.udid) ?? null,
-    }));
+function booleanField(value: unknown, name: string): boolean {
+    if (typeof value !== 'boolean') throw httpError(400, `${name} phải là true/false`);
+    return value;
+}
+
+export function normalizeHandle(value: string): string {
+    const handle = value.trim().replace(/^@+/, '');
+    return handle ? `@${handle}` : '';
+}
+
+/** Validates an account body; with `partial`, only the fields present are checked and returned. */
+export function parseAccountInput(body: Record<string, unknown>, partial: boolean): Partial<AccountInput> {
+    const input: Partial<AccountInput> = {};
+    const has = (key: string) => body[key] !== undefined;
+    if (!partial || has('deviceUdid')) {
+        if (typeof body.deviceUdid !== 'string' || !body.deviceUdid.trim()) throw httpError(400, 'Chọn máy cho acc');
+        input.deviceUdid = body.deviceUdid.trim();
+    }
+    if (!partial || has('handle')) {
+        const handle = typeof body.handle === 'string' ? normalizeHandle(body.handle) : '';
+        if (!handle) throw httpError(400, 'Nhập tên acc TikTok (vd. @ten_acc)');
+        input.handle = handle;
+    }
+    if (!partial || has('keywords')) {
+        const raw = body.keywords;
+        const keywords = typeof raw === 'string' ? parseKeywordList(raw)
+            : Array.isArray(raw) ? parseKeywordList(raw.filter((entry): entry is string => typeof entry === 'string'))
+                : [];
+        if (keywords.length === 0) throw httpError(400, 'Thêm ít nhất một keyword cho niche');
+        if (keywords.length > 50) throw httpError(400, 'Tối đa 50 keyword mỗi acc');
+        input.keywords = keywords;
+    }
+    if (has('personality')) {
+        if (!PERSONALITIES.includes(body.personality as Personality)) throw httpError(400, 'Kiểu tương tác không hợp lệ');
+        input.personality = body.personality as Personality;
+    }
+    if (has('minutesPerSession')) input.minutesPerSession = integerInRange(body.minutesPerSession, 'Thời lượng', 1, 180);
+    if (has('keywordsPerSession')) input.keywordsPerSession = integerInRange(body.keywordsPerSession, 'Số keyword mỗi phiên', 1, 10);
+    if (has('forYouMinutes')) input.forYouMinutes = integerInRange(body.forYouMinutes, 'Thời gian For You', 0, 60);
+    if (has('dailyTimes')) {
+        if (!Array.isArray(body.dailyTimes) || !body.dailyTimes.every((time) => typeof time === 'string' && TIME_PATTERN.test(time))) {
+            throw httpError(400, 'Giờ chạy phải có dạng HH:MM');
+        }
+        input.dailyTimes = [...new Set(body.dailyTimes as string[])].sort();
+    }
+    if (has('nicheFilter')) input.nicheFilter = booleanField(body.nicheFilter, 'nicheFilter');
+    if (has('enabled')) input.enabled = booleanField(body.enabled, 'enabled');
+    return input;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+    return (error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE';
 }
 
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
-    const app = Fastify({ logger: options.logger ?? false, bodyLimit: 50 * 1024 * 1024 });
-    await app.register(formbody);
-    await app.register(cookie);
-    await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 20 } });
+    const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1024 * 1024 });
+    const { repository, runner } = options;
+    const discover = options.discoverDevices ?? discoverConnectedDevices;
 
     // Server-rendered HTML must never be cached — a stale page + fresh assets
-    // (or vice versa) breaks the dashboard after a deploy.
+    // (or vice versa) breaks the dashboard after an update.
     app.addHook('onSend', async (_request, reply) => {
         const type = reply.getHeader('content-type');
         if (typeof type === 'string' && type.includes('text/html') && !reply.hasHeader('cache-control')) {
@@ -110,139 +139,106 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         }
     });
 
-    // CSRF guard — runs for every deployment, auth or not. The default loopback
-    // dashboard is otherwise open to form-encoded POSTs from any page the
-    // operator has open in the same browser (tap the phone, stop executions,
-    // launch tasks). A Bearer token means a real API client, not a browser form.
+    // CSRF guard: the dashboard has no login, so a page open in the same
+    // browser must not be able to tap the phone or start sessions with a
+    // cross-origin POST. Writes need an Origin whose host matches ours.
     app.addHook('onRequest', async (request, reply) => {
         if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
-        if (request.headers.authorization?.startsWith('Bearer ')) return;
         const origin = request.headers.origin;
-        if (!origin) return csrfBlocked(reply);
-        const configured = [process.env.PUBLIC_ORIGIN, ...(process.env.PHONE_FARM_TRUSTED_ORIGINS ?? '').split(',')]
-            .map((value) => value?.trim().replace(/\/+$/, '')).filter((value): value is string => Boolean(value));
-        if (configured.length) {
-            if (!configured.includes(origin.replace(/\/+$/, ''))) return csrfBlocked(reply);
-            return;
-        }
-        // Nothing configured: same-origin only, compared by host (ignoring
-        // scheme) so a TLS-terminating proxy that doesn't forward
-        // x-forwarded-proto still passes. URL normalises default ports, so
-        // compare the Origin's host against the request Host under both schemes.
-        // Set PHONE_FARM_TRUSTED_ORIGINS if the proxy also rewrites Host.
-        let originHost: string;
-        try { originHost = new URL(origin).host; } catch { return csrfBlocked(reply); }
-        const hostMatches = ['http', 'https'].some((scheme) => {
+        let originHost: string | undefined;
+        try { originHost = origin ? new URL(origin).host : undefined; } catch { /* invalid origin */ }
+        const hostMatches = originHost !== undefined && ['http', 'https'].some((scheme) => {
             try { return new URL(`${scheme}://${request.headers.host}`).host === originHost; } catch { return false; }
         });
-        if (!hostMatches) return csrfBlocked(reply);
+        if (!hostMatches) return reply.code(403).send({ error: 'Cross-origin write blocked' });
     });
 
-    if (options.authProvider) {
-        await options.authProvider.registerRoutes(app);
-        app.addHook('onRequest', async (request, reply) => {
-            if (options.authProvider?.isPublicPath(request.url.split('?')[0] ?? request.url)) return;
-            const user = await options.authProvider?.authenticate(request, reply);
-            if (!user && !reply.sent) await reply.code(401).send({ error: 'Authentication required' });
-        });
-    }
-
     const remote = new RegistryWdaRemoteControl();
-    const logoutPath = options.authProvider?.logoutPath;
-    const authNavHtml = logoutPath
-        ? `<a class="button secondary app-logout" href="${escapeHtml(logoutPath)}">Log out</a>` : '';
-    const navLinks: PluginNavLink[] = options.plugins.list()
-        .flatMap((plugin) => plugin.navLinks ?? [])
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const pluginNavHtml = navLinks
-        .map((link) => `<a class="button secondary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`)
-        .join('');
-    const renderPage = (title: string, body: string) => page(title, body, logoutPath, navLinks);
     const assetHash = (body: string) => crypto.createHash('sha1').update(body).digest('base64url').slice(0, 10);
 
-    let themed: LoadedDashboardTheme | null = null;
-    if (options.dashboardTheme) {
-        const root = options.dashboardTheme.rootDirectory;
+    let dashboard: LoadedDashboard | null = null;
+    if (options.dashboard) {
         const require = createRequire(import.meta.url);
-        const [indexHtml, deviceHtml, tasksHtml, registerDeviceHtml, styles, deviceScript, tasksScript, registerDeviceScript, htmx] = await Promise.all([
-            readFile(path.join(root, 'templates/index.html'), 'utf8'),
-            readFile(path.join(root, 'templates/device.html'), 'utf8'),
-            readFile(path.join(root, 'templates/tasks.html'), 'utf8'),
-            readFile(path.join(root, 'templates/register-device.html'), 'utf8'),
-            readFile(path.join(root, 'styles.css'), 'utf8'),
-            readFile(path.join(root, 'assets/device.js'), 'utf8'),
-            readFile(path.join(root, 'assets/tasks.js'), 'utf8'),
-            readFile(path.join(root, 'assets/register-device.js'), 'utf8'),
+        const [indexHtml, deviceHtml, registerDeviceHtml, styles, indexScript, deviceScript, registerDeviceScript, htmx] = await Promise.all([
+            readFile(path.join(DASHBOARD_ROOT, 'templates/index.html'), 'utf8'),
+            readFile(path.join(DASHBOARD_ROOT, 'templates/device.html'), 'utf8'),
+            readFile(path.join(DASHBOARD_ROOT, 'templates/register-device.html'), 'utf8'),
+            readFile(path.join(DASHBOARD_ROOT, 'styles.css'), 'utf8'),
+            readFile(path.join(DASHBOARD_ROOT, 'assets/index.js'), 'utf8'),
+            readFile(path.join(DASHBOARD_ROOT, 'assets/device.js'), 'utf8'),
+            readFile(path.join(DASHBOARD_ROOT, 'assets/register-device.js'), 'utf8'),
             readFile(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8'),
         ]);
         // Content-hash every asset URL in the templates so a changed file gets a
-        // fresh URL that no browser or CDN can serve stale.
+        // fresh URL that no browser can serve stale.
         const versions: Record<string, string> = {
-            'styles.css': assetHash(styles), 'device.js': assetHash(deviceScript),
-            'tasks.js': assetHash(tasksScript), 'register-device.js': assetHash(registerDeviceScript),
-            'htmx.min.js': assetHash(htmx),
+            'styles.css': assetHash(styles), 'index.js': assetHash(indexScript), 'device.js': assetHash(deviceScript),
+            'register-device.js': assetHash(registerDeviceScript), 'htmx.min.js': assetHash(htmx),
         };
         const finalize = (html: string) => {
-            let out = html.replaceAll('__AUTH_NAV__', authNavHtml).replaceAll('__PLUGIN_NAV__', pluginNavHtml)
-                .replaceAll('__FOOTER__', FOOTER_HTML);
+            let out = html.replaceAll('__FOOTER__', FOOTER_HTML);
             for (const [name, v] of Object.entries(versions)) out = out.replaceAll(`/assets/${name}`, `/assets/${name}?v=${v}`);
             return out;
         };
-        themed = {
-            indexHtml: finalize(indexHtml), deviceHtml: finalize(deviceHtml),
-            tasksHtml: finalize(tasksHtml), registerDeviceHtml: finalize(registerDeviceHtml),
-            styles, deviceScript, tasksScript, registerDeviceScript, htmx,
+        dashboard = {
+            indexHtml: finalize(indexHtml), deviceHtml: finalize(deviceHtml), registerDeviceHtml: finalize(registerDeviceHtml),
+            styles, indexScript, deviceScript, registerDeviceScript, htmx,
         };
     }
 
-    const renderActivity = async (deviceUdid: string, message?: string): Promise<string> => {
-        const executions = await options.scheduler.listExecutions(25, deviceUdid);
-        const execution = executions.find(({ status }) => status === 'running') ?? executions[0];
-        if (!execution) return `<section id="device-activity" class="run-panel"><div class="run-heading"><span class="status idle"><span class="dot"></span>idle</span><span class="run-meta">No automation has run on this device yet.</span></div>${message ? `<p class="run-error">${escapeHtml(message)}</p>` : ''}<pre>Waiting for output…</pre></section>`;
-        const detail = await options.scheduler.execution(execution.id);
-        // A plugin (or task version) can be uninstalled while old executions
-        // still reference it — degrade instead of throwing out of the fragment.
-        let definition: { summarize(payload: JsonObject): string; supportsStop(payload: JsonObject): boolean } | undefined;
-        try {
-            definition = options.plugins.task({
-                pluginId: execution.pluginId, taskType: execution.taskType,
-                taskVersion: execution.taskVersion, payload: execution.payload,
-            });
-        } catch { /* plugin unavailable */ }
-        const summary = definition
-            ? definition.summarize(execution.payload)
-            : `${execution.pluginId}/${execution.taskType}@${execution.taskVersion} (plugin not installed)`;
-        const canStop = execution.status === 'queued' || (execution.status === 'running' && (definition?.supportsStop(execution.payload) ?? true));
-        const stop = canStop
-            ? `<form hx-post="/api/executions/${execution.id}/stop" hx-target="#device-activity" hx-swap="outerHTML"><button class="button secondary" type="submit">Stop</button></form>` : '';
-        return `<section id="device-activity" class="run-panel" hx-get="/api/devices/${encodeURIComponent(deviceUdid)}/fragments/activity" hx-trigger="every 1s" hx-swap="outerHTML"><div class="run-heading"><span class="status ${escapeHtml(execution.status)}"><span class="dot"></span>${escapeHtml(execution.status)}</span><span class="run-meta">${escapeHtml(summary)} · ${escapeHtml(execution.scheduledFor.toISOString())}</span></div>${message ? `<p class="run-error">${escapeHtml(message)}</p>` : ''}${stop}<pre>${detail?.logs.length ? detail.logs.map(escapeHtml).join('\n') : escapeHtml(execution.error ?? 'Waiting for worker output…')}</pre></section>`;
+    const findRegistered = async (udid: string) => (await loadRegisteredDevices()).find((device) => device.udid === udid);
+    const assertIdle = (udid: string, message: string) => {
+        if (runner.activeSession(udid) !== undefined) throw httpError(409, message);
     };
-
-    app.get('/health', async () => {
-        const body: Record<string, unknown> = {
-            ok: true,
-            plugins: options.plugins.list().map(({ id, version }) => ({ id, version })),
+    const accountsWithRunState = () => repository.listAccounts().map((account) => {
+        const runningSessionId = runner.activeSession(account.deviceUdid);
+        return {
+            ...account,
+            running: runningSessionId !== undefined && runningSessionId === account.lastSession?.id,
         };
-        // Deploy tooling writes a RELEASED file (sha, subject, deployedAt) into the
-        // working directory; surface it so "what's live" is answerable over HTTP.
-        try {
-            body.release = JSON.parse(await readFile(path.resolve(process.env.PHONE_FARM_RELEASE_FILE ?? 'RELEASED'), 'utf8'));
-        } catch { /* no release marker — fine */ }
-        return body;
     });
-    app.get('/api/plugins', async () => options.plugins.list().map((plugin) => ({
-        id: plugin.id, version: plugin.version, displayName: plugin.displayName,
-        tasks: plugin.tasks.map(({ type, version, displayName }) => ({ type, version, displayName })),
-    })));
-    app.get('/api/devices', async () => registeredWithStatus());
-    app.get('/api/devices/discovered', async () => discoverConnectedDevices());
+
+    app.get('/health', async () => ({ ok: true }));
+
+    // Everything the main page shows, in one poll.
+    app.get('/api/overview', async () => {
+        const [registered, connected] = await Promise.all([loadRegisteredDevices(), discover()]);
+        const online = new Map(connected.map((device) => [device.udid, device]));
+        const accounts = accountsWithRunState();
+        const registeredIds = new Set(registered.map(({ udid }) => udid));
+        return {
+            devices: registered.map((device) => {
+                const sessionId = runner.activeSession(device.udid);
+                return {
+                    ...redactDevice(device),
+                    connected: device.disabled ? null : online.get(device.udid) ?? null,
+                    runningSessionId: sessionId ?? null,
+                    runningHandle: sessionId === undefined ? null
+                        : accounts.find((account) => account.lastSession?.id === sessionId)?.handle ?? null,
+                    accountCount: accounts.filter((account) => account.deviceUdid === device.udid).length,
+                };
+            }),
+            unregistered: connected.filter(({ udid }) => !registeredIds.has(udid)),
+            accounts,
+        };
+    });
+
+    app.get('/api/devices', async () => {
+        const [registered, connected] = await Promise.all([loadRegisteredDevices(), discover()]);
+        const online = new Map(connected.map((device) => [device.udid, device]));
+        return registered.map((device) => ({
+            ...redactDevice(device),
+            connected: device.disabled ? null : online.get(device.udid) ?? null,
+        }));
+    });
+    app.get('/api/devices/discovered', async () => discover());
     app.get('/api/device-registrations/candidates', async (_request, reply) => {
         if (!options.registrations) return reply.code(503).send({ error: 'Device registration is not configured' });
         return { devices: await options.registrations.candidates() };
     });
     app.post<{ Body: { udid?: string } }>('/api/device-registrations', async (request, reply) => {
         if (!options.registrations) return reply.code(503).send({ error: 'Device registration is not configured' });
-        if (!request.body.udid?.trim()) return reply.code(400).send({ error: 'Device UDID is required' });
+        if (!request.body?.udid?.trim()) return reply.code(400).send({ error: 'Device UDID is required' });
         return reply.code(201).send(await options.registrations.create(request.body.udid.trim()));
     });
     app.get<{ Params: { id: string } }>('/api/device-registrations/:id', async (request, reply) => {
@@ -270,46 +266,17 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         await options.registrations.cancel(request.params.id);
         return reply.code(204).send();
     });
-    app.post<{ Body: { name?: string; udid?: string; wdaLocalPort?: number; mjpegLocalPort?: number; passcode?: string; coordinateProfile?: string; pluginData?: Record<string, JsonObject> } }>(
-        '/api/devices', async (request, reply) => {
-            const { name, udid, wdaLocalPort, mjpegLocalPort, passcode, coordinateProfile, pluginData } = request.body;
-            if (!udid) return reply.code(400).send({ error: 'A device UDID is required' });
-            if (passcode !== undefined && !PASSCODE_PATTERN.test(passcode)) {
-                return reply.code(400).send({ error: 'Device passcode must contain at least four digits' });
-            }
-            const created = await mutateRegisteredDevices((devices) => {
-                if (devices.some((device) => device.udid === udid)) throw httpError(409, 'A device with this UDID is already registered');
-                // Explicit whitelist — never mass-assign arbitrary body keys into devices.json.
-                const device: RegisteredDevice = {
-                    name: name ?? udid, udid, pluginData: pluginData ?? {},
-                    ...(wdaLocalPort !== undefined ? { wdaLocalPort } : {}),
-                    ...(mjpegLocalPort !== undefined ? { mjpegLocalPort } : {}),
-                    ...(coordinateProfile !== undefined ? { coordinateProfile: coordinateProfile as RegisteredDevice['coordinateProfile'] } : {}),
-                    ...(passcode !== undefined ? { passcode } : {}),
-                };
-                devices.push(device);
-                return device;
-            });
-            return reply.code(201).send(redactDevice(created));
-        },
-    );
-    app.patch<{ Params: { udid: string }; Body: { name?: string; wdaLocalPort?: number; mjpegLocalPort?: number; passcode?: string; coordinates?: unknown; disabled?: boolean; coordinateProfile?: string; pluginData?: Record<string, JsonObject> } }>(
+    app.patch<{ Params: { udid: string }; Body: { name?: string; passcode?: string; coordinates?: unknown; disabled?: boolean } }>(
         '/api/devices/:udid', async (request, reply) => {
-            const { passcode, coordinates, name, wdaLocalPort, mjpegLocalPort, disabled, coordinateProfile, pluginData } = request.body;
+            const { passcode, coordinates, name, disabled } = request.body ?? {};
             if (passcode !== undefined && passcode !== '' && !PASSCODE_PATTERN.test(passcode)) {
                 return reply.code(400).send({ error: 'Device passcode must contain at least four digits' });
             }
-            if (disabled === true && await options.scheduler.activeExecution(request.params.udid)) {
-                return reply.code(409).send({ error: 'Stop the running automation before disconnecting this device' });
-            }
+            if (disabled === true) assertIdle(request.params.udid, 'Stop the running session before disconnecting this device');
             const updated = await mutateRegisteredDevices((devices) => {
                 const device = devices.find((entry) => entry.udid === request.params.udid);
                 if (!device) throw httpError(404, 'Device not found');
                 if (name !== undefined) device.name = name;
-                if (wdaLocalPort !== undefined) device.wdaLocalPort = wdaLocalPort;
-                if (mjpegLocalPort !== undefined) device.mjpegLocalPort = mjpegLocalPort;
-                if (coordinateProfile !== undefined) device.coordinateProfile = coordinateProfile as RegisteredDevice['coordinateProfile'];
-                if (pluginData !== undefined) device.pluginData = pluginData;
                 if (disabled === true) device.disabled = true;
                 else if (disabled === false) delete device.disabled;
                 // passcode: a value sets it, '' clears it, omitting it leaves it
@@ -328,7 +295,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         },
     );
     app.get<{ Params: { udid: string } }>('/api/devices/:udid/coordinates', async (request, reply) => {
-        const device = (await loadRegisteredDevices()).find(({ udid }) => udid === request.params.udid);
+        const device = await findRegistered(request.params.udid);
         if (!device) return reply.code(404).send({ error: 'Device not found' });
         const base = coordinatesForProfile(device.coordinateProfile).tiktok;
         const effective = resolveDeviceCoordinates(device.coordinateProfile, device.coordinates).tiktok;
@@ -343,15 +310,11 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         };
     });
     app.delete<{ Params: { udid: string } }>('/api/devices/:udid', async (request, reply) => {
-        const exists = (await loadRegisteredDevices()).some(({ udid }) => udid === request.params.udid);
-        if (!exists) return reply.code(404).send({ error: 'Device not found' });
-        if (await options.scheduler.activeExecution(request.params.udid)) {
-            return reply.code(409).send({ error: 'Stop the running automation before removing this device' });
-        }
-        for (const schedule of await options.scheduler.listSchedules(500, request.params.udid)) {
-            if (!['cancelled', 'completed'].includes(schedule.status)) {
-                await options.scheduler.setScheduleStatus(schedule.id, 'cancelled');
-            }
+        if (!await findRegistered(request.params.udid)) return reply.code(404).send({ error: 'Device not found' });
+        assertIdle(request.params.udid, 'Stop the running session before removing this device');
+        const accounts = repository.accountsOnDevice(request.params.udid);
+        if (accounts.length) {
+            return reply.code(409).send({ error: `Xóa hoặc chuyển các acc trên máy này trước: ${accounts.map(({ handle }) => handle).join(', ')}` });
         }
         await mutateRegisteredDevices((devices) => {
             const index = devices.findIndex(({ udid }) => udid === request.params.udid);
@@ -360,25 +323,9 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         remote.forget(request.params.udid);
         return reply.code(204).send();
     });
-    app.post<{ Params: { udid: string } }>('/api/devices/:udid/checks', async (request, reply) => {
-        const device = (await loadRegisteredDevices()).find(({ udid }) => udid === request.params.udid);
-        if (!device) return reply.code(404).send({ error: 'Device not found' });
-        const identity = (await discoverConnectedDevices()).find(({ udid }) => udid === device.udid) ?? device;
-        const results = [];
-        for (const plugin of options.plugins.list()) {
-            for (const check of plugin.registrationChecks ?? []) {
-                results.push({ pluginId: plugin.id, checkId: check.id, ...(await check.run(identity, device.pluginData[plugin.id] ?? {})) });
-            }
-        }
-        return results;
-    });
 
-    // NB: /remote/screenshot and /remote/action below are the canonical
-    // endpoints — they carry the activeExecution guard and the cached
-    // per-device client. The old unprefixed /screenshot and /actions twins
-    // that bypassed both were removed.
     app.get<{ Params: { udid: string } }>('/api/devices/:udid/remote/info', async (request, reply) => {
-        const device = (await discoverConnectedDevices()).find(({ udid }) => udid === request.params.udid);
+        const device = (await discover()).find(({ udid }) => udid === request.params.udid);
         if (!device) return reply.code(404).send({ error: 'Device is not connected' });
         return { device, screen: await remote.getScreenInfo(device.udid) };
     });
@@ -392,7 +339,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     });
     app.get<{ Params: { udid: string } }>('/api/devices/:udid/remote/stream', async (request, reply) => {
         // Close the upstream device stream the moment the browser goes away —
-        // otherwise every HTMX fragment swap leaks a live MJPEG connection.
+        // otherwise every page change leaks a live MJPEG connection.
         const abort = new AbortController();
         request.raw.once('close', () => abort.abort());
         const upstream = await remote.getMjpegStream(request.params.udid, abort.signal);
@@ -401,15 +348,13 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
             .type(upstream.headers.get('content-type') ?? 'multipart/x-mixed-replace; boundary=--BoundaryString')
             .send(Readable.from(upstream.body as AsyncIterable<Uint8Array>));
     });
-    app.post<{ Params: { udid: string }; Body: RemoteAction }>('/api/devices/:udid/remote/action', async (request, reply) => {
-        if (await options.scheduler.activeExecution(request.params.udid)) {
-            return reply.code(409).send({ error: 'Remote input is disabled while automation is running' });
-        }
+    app.post<{ Params: { udid: string }; Body: RemoteAction }>('/api/devices/:udid/remote/action', async (request) => {
+        assertIdle(request.params.udid, 'Remote input is disabled while a nurture session is running');
         await remote.performAction(request.params.udid, request.body);
         return { ok: true };
     });
     app.get<{ Params: { udid: string } }>('/api/devices/:udid/connection', async (request, reply) => {
-        const registered = (await loadRegisteredDevices()).find(({ udid }) => udid === request.params.udid);
+        const registered = await findRegistered(request.params.udid);
         if (!registered) return reply.code(404).send({ error: 'Device is not registered' });
         // Prefer the real per-device state the wda-service supervisor tracks
         // (physical, wda, appium, retryCount, message).
@@ -421,7 +366,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
                 if (status) return status;
             }
         } catch { /* supervisor socket unavailable — fall back to a probe */ }
-        const connected = (await discoverConnectedDevices()).some(({ udid }) => udid === registered.udid);
+        const connected = (await discover()).some(({ udid }) => udid === registered.udid);
         let wda = false;
         try {
             wda = (await fetch(`http://127.0.0.1:${registered.wdaLocalPort ?? 8100}/status`, { signal: AbortSignal.timeout(2_000) })).ok;
@@ -435,122 +380,81 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         return fallback;
     });
     app.post<{ Params: { udid: string } }>('/api/devices/:udid/reconnect', async (request, reply) => {
-        if (await options.scheduler.activeExecution(request.params.udid)) {
-            return reply.code(409).send({ error: 'Cannot reconnect while automation is running' });
-        }
+        assertIdle(request.params.udid, 'Cannot reconnect while a nurture session is running');
         remote.forget(request.params.udid);
         return reply.code(202).send({ ok: true, message: 'The shared WDA supervisor will reconnect automatically' });
     });
 
-    app.get<{ Querystring: { deviceUdid?: string } }>('/api/schedules', async (request) => ({
-        schedules: await options.scheduler.listSchedules(200, request.query.deviceUdid),
-    }));
-    app.get<{ Querystring: { deviceUdid?: string } }>('/api/executions', async (request) => ({
-        executions: await options.scheduler.listExecutions(200, request.query.deviceUdid),
-    }));
-    app.get<{ Params: { id: string } }>('/api/executions/:id', async (request, reply) => {
-        const execution = await options.scheduler.execution(request.params.id);
-        return execution ?? reply.code(404).send({ error: 'Execution not found' });
+    app.get<{ Querystring: { deviceUdid?: string } }>('/api/accounts', async (request) => {
+        const accounts = accountsWithRunState();
+        return request.query.deviceUdid ? accounts.filter(({ deviceUdid }) => deviceUdid === request.query.deviceUdid) : accounts;
     });
-    app.post<{ Body: CreateTaskInput & { assetIds?: string[] } }>('/api/schedules', async (request, reply) => {
-        const device = (await loadRegisteredDevices()).find(({ udid }) => udid === request.body.deviceUdid);
-        if (!device) return reply.code(404).send({ error: 'Device not found' });
-        if (device.disabled) return reply.code(409).send({ error: 'This device is disabled — activate it before scheduling automation' });
-        const schedule = await options.scheduler.createTask(
-            request.body, device.pluginData[request.body.task.pluginId] ?? {}, new Date(), request.body.assetIds ?? [],
-        );
-        return reply.code(201).send(schedule);
-    });
-    app.patch<{
-        Params: { id: string };
-        Body: { timing?: ScheduleTiming; runWindowMinutes?: number; recurringPublishConfirmed?: boolean };
-    }>('/api/schedules/:id', async (request, reply) => {
-        const current = await options.scheduler.schedule(request.params.id);
-        if (!current) return reply.code(404).send({ error: 'Schedule not found' });
-        const device = (await loadRegisteredDevices()).find(({ udid }) => udid === current.deviceUdid);
-        if (!device) return reply.code(404).send({ error: 'Scheduled device is not registered' });
-        const payload = request.body.recurringPublishConfirmed === undefined
-            ? current.payload
-            : { ...current.payload, recurringPublishConfirmed: request.body.recurringPublishConfirmed };
-        const schedule = await options.scheduler.updateSchedule(request.params.id, {
-            ...(request.body.timing ? { timing: request.body.timing } : {}),
-            ...(request.body.runWindowMinutes !== undefined ? { runWindowMinutes: request.body.runWindowMinutes } : {}),
-            task: {
-                pluginId: current.pluginId, taskType: current.taskType,
-                taskVersion: current.taskVersion, payload,
-            },
-        }, device.pluginData[current.pluginId] ?? {});
-        return schedule ?? reply.code(409).send({ error: 'Completed or cancelled schedules cannot be edited' });
-    });
-    const changeStatus = async (id: string, status: 'active' | 'paused' | 'cancelled', reply: FastifyReply) => {
+    app.post<{ Body: Record<string, unknown> }>('/api/accounts', async (request, reply) => {
+        const input = parseAccountInput(request.body ?? {}, false) as AccountInput;
+        if (!await findRegistered(input.deviceUdid)) return reply.code(400).send({ error: 'Máy này chưa được đăng ký' });
         try {
-            const schedule = await options.scheduler.setScheduleStatus(id, status);
-            return schedule ?? reply.code(404).send({ error: 'Schedule not found' });
+            return reply.code(201).send(repository.createAccount(input));
         } catch (error) {
-            if (error instanceof ScheduleTransitionError) return reply.code(409).send({ error: errorMessage(error) });
+            if (isUniqueViolation(error)) return reply.code(409).send({ error: `${input.handle} đã có trên máy này` });
             throw error;
         }
-    };
-    app.post<{ Params: { id: string }; Body: { status: 'active' | 'paused' | 'cancelled' } }>('/api/schedules/:id/status',
-        (request, reply) => changeStatus(request.params.id, request.body.status, reply));
-    for (const action of ['pause', 'resume', 'cancel'] as const) {
-        const status = action === 'pause' ? 'paused' : action === 'resume' ? 'active' : 'cancelled';
-        app.post<{ Params: { id: string } }>(`/api/schedules/:id/${action}`,
-            (request, reply) => changeStatus(request.params.id, status, reply));
-    }
-    app.post<{ Params: { id: string } }>('/api/executions/:id/stop', async (request, reply) => {
-        const result = await options.scheduler.requestStop(request.params.id);
-        if (result === 'not-found') return reply.code(404).send({ error: 'Execution not found' });
-        if (request.headers['hx-request']) {
-            const execution = await options.scheduler.execution(request.params.id);
-            return reply.type('text/html').send(await renderActivity(execution?.deviceUdid ?? ''));
+    });
+    app.patch<{ Params: { id: string }; Body: Record<string, unknown> }>('/api/accounts/:id', async (request, reply) => {
+        const id = Number(request.params.id);
+        const current = repository.account(id);
+        if (!current) return reply.code(404).send({ error: 'Không tìm thấy acc' });
+        const input = parseAccountInput(request.body ?? {}, true);
+        if (input.deviceUdid && input.deviceUdid !== current.deviceUdid) {
+            if (!await findRegistered(input.deviceUdid)) return reply.code(400).send({ error: 'Máy này chưa được đăng ký' });
+            assertIdle(current.deviceUdid, 'Dừng phiên đang chạy trước khi chuyển acc sang máy khác');
         }
-        return { result };
-    });
-    app.post<{ Params: { id: string } }>('/api/executions/:id/retry', async (request, reply) => {
-        const execution = await options.scheduler.retryExecution(request.params.id);
-        return execution ?? reply.code(409).send({ error: 'Execution is not retryable' });
-    });
-
-    app.post('/api/assets', async (request, reply) => {
-        const dataRoot = path.resolve(process.env.SCHEDULER_DATA_DIR ?? '.scheduler-data');
-        const uploadDirectory = path.join(dataRoot, 'uploads');
-        await mkdir(uploadDirectory, { recursive: true });
-        const created: Array<{ relativePath: string; originalName: string; mimeType: string; size: number; sha256: string }> = [];
-        for await (const part of request.files()) {
-            const id = crypto.randomUUID();
-            const relativePath = path.join('uploads', id);
-            const handle = await open(path.join(dataRoot, relativePath), 'wx', 0o600);
-            const hash = crypto.createHash('sha256');
-            let size = 0;
-            try {
-                for await (const chunk of part.file) {
-                    const buffer = Buffer.from(chunk);
-                    size += buffer.length;
-                    hash.update(buffer);
-                    await handle.write(buffer);
-                }
-            } finally {
-                await handle.close();
-            }
-            created.push({ relativePath, originalName: part.filename, mimeType: part.mimetype, size, sha256: hash.digest('hex') });
+        try {
+            return repository.updateAccount(id, input);
+        } catch (error) {
+            if (isUniqueViolation(error)) return reply.code(409).send({ error: 'Acc này đã có trên máy đó' });
+            throw error;
         }
-        return reply.code(201).send(await options.scheduler.registerAssets(created));
     });
-    app.delete<{ Body: { assetIds: string[] } }>('/api/assets', async (request, reply) => {
-        await options.scheduler.deleteAssets(request.body.assetIds ?? []);
+    app.delete<{ Params: { id: string } }>('/api/accounts/:id', async (request, reply) => {
+        const account = repository.account(Number(request.params.id));
+        if (!account) return reply.code(404).send({ error: 'Không tìm thấy acc' });
+        const running = runner.activeSession(account.deviceUdid);
+        if (running !== undefined && repository.session(running)?.accountId === account.id) {
+            return reply.code(409).send({ error: 'Dừng phiên đang chạy trước khi xóa acc' });
+        }
+        repository.deleteAccount(account.id);
         return reply.code(204).send();
     });
+    app.post<{ Params: { id: string } }>('/api/accounts/:id/nurture', async (request, reply) => {
+        try {
+            return reply.code(201).send(await runner.start(Number(request.params.id)));
+        } catch (error) {
+            if (error instanceof RunnerError) return reply.code(error.statusCode).send({ error: error.message });
+            throw error;
+        }
+    });
 
-    for (const plugin of options.plugins.list()) {
-        if (plugin.registerRoutes) await plugin.registerRoutes({
-            app, routePrefix: `/plugins/${plugin.id}`, scheduler: options.scheduler, remote,
-            loadDevices: loadRegisteredDevices, saveDevices: saveRegisteredDevices, mutateDevices: mutateRegisteredDevices, renderActivity,
-        });
-    }
+    app.get<{ Querystring: { accountId?: string; limit?: string } }>('/api/sessions', async (request) => {
+        const limit = Math.min(200, Math.max(1, Number(request.query.limit ?? 50) || 50));
+        const accountId = request.query.accountId ? Number(request.query.accountId) : undefined;
+        return repository.listSessions(limit, accountId);
+    });
+    app.post<{ Params: { id: string } }>('/api/sessions/:id/stop', async (request, reply) => {
+        if (!runner.stop(Number(request.params.id))) return reply.code(409).send({ error: 'Phiên này không còn chạy' });
+        return reply.code(202).send({ ok: true });
+    });
+    app.get<{ Params: { id: string } }>('/api/sessions/:id/log', async (request, reply) => {
+        const id = Number(request.params.id);
+        if (!Number.isInteger(id) || !repository.session(id)) return reply.code(404).send({ error: 'Không tìm thấy phiên' });
+        try {
+            return reply.type('text/plain; charset=utf-8').send(await readFile(sessionLogPath(id), 'utf8'));
+        } catch {
+            return reply.type('text/plain; charset=utf-8').send('(chưa có log)');
+        }
+    });
 
-    if (themed) {
-        const theme = themed;
+    if (dashboard) {
+        const pages = dashboard;
         // Templates request these with a ?v=<contenthash>. A versioned request is
         // safe to cache forever; a bare one (bookmark) must revalidate via ETag.
         const asset = (contentType: string, body: string) => {
@@ -563,92 +467,27 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
                 return reply.type(contentType).send(body);
             };
         };
-        app.get('/assets/styles.css', asset('text/css', theme.styles));
-        app.get('/assets/device.js', asset('text/javascript', theme.deviceScript));
-        app.get('/assets/tasks.js', asset('text/javascript', theme.tasksScript));
-        app.get('/assets/register-device.js', asset('text/javascript', theme.registerDeviceScript));
-        app.get('/assets/htmx.min.js', asset('text/javascript', theme.htmx));
-        app.get('/api/fragments/devices', async (_request, reply) => {
-            const devices = await registeredWithStatus();
-            const active = devices.filter((device) => !device.disabled);
-            const disabled = devices.filter((device) => device.disabled);
-            const toggleButton = (udid: string, label: string, next: boolean) =>
-                `<button type="button" class="button secondary device-toggle" data-toggle-device="${encodeURIComponent(udid)}" data-disabled="${next}">${label}</button>`;
-            const cards = active.map((device) => {
-                const accounts = Object.values(device.pluginData).flatMap((value) => {
-                    const candidate = value.accounts;
-                    return Array.isArray(candidate) ? candidate.filter((entry) => typeof entry === 'string') : [];
-                });
-                // A still screenshot that refreshes with the 5s fragment poll —
-                // not a live MJPEG stream. Streaming every device's screen through
-                // the tunnel at once is what made the grid crawl.
-                const preview = device.connected
-                    ? `<div class="device-preview-frame"><img class="device-preview" src="/api/devices/${encodeURIComponent(device.udid)}/remote/screenshot?t=${Date.now()}" alt="Screen of ${escapeHtml(device.name)}" draggable="false" onerror="this.style.visibility='hidden'"></div>`
-                    : '<div class="device-preview-frame unavailable" aria-hidden="true"><div class="device-icon"></div></div>';
-                return `<article class="device-card">${preview}<div class="device-copy"><h2>${escapeHtml(device.name)}</h2><p>${device.connected ? `iOS ${escapeHtml(device.connected.osVersion)}` : escapeHtml(device.udid)}</p><span class="connected${device.connected ? '' : ' offline'}"><span></span>${device.connected ? 'Online' : 'Offline'}</span>${accounts.length ? `<p class="accounts">${accounts.map(escapeHtml).join(', ')}</p>` : ''}</div><div class="device-card-actions"><a class="button secondary" href="/devices/${encodeURIComponent(device.udid)}">Open device <span aria-hidden="true">→</span></a>${toggleButton(device.udid, 'Disconnect', true)}</div></article>`;
-            }).join('');
-            const disabledPanel = disabled.length
-                ? `<details class="disabled-devices"${disabled.length ? '' : ' hidden'}><summary>Disconnected devices (${disabled.length})</summary><ul>${disabled.map((device) => `<li><span>${escapeHtml(device.name)}</span>${toggleButton(device.udid, 'Reconnect', false)}</li>`).join('')}</ul></details>`
-                : '';
-            const toggleScript = `<script>if(!window.__deviceToggle){window.__deviceToggle=1;document.addEventListener('click',async function(e){var b=e.target.closest('[data-toggle-device]');if(!b)return;e.preventDefault();b.disabled=true;var r=await fetch('/api/devices/'+b.dataset.toggleDevice,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({disabled:b.dataset.disabled==='true'})});if(r.ok){if(window.htmx)htmx.ajax('GET','/api/fragments/devices',{target:'#device-list',swap:'outerHTML'})}else{b.disabled=false;alert(((await r.json().catch(function(){return{}}))||{}).error||'Request failed')}})}</script>`;
-            return reply.type('text/html').send(`<section id="device-list" class="device-list" hx-get="/api/fragments/devices" hx-trigger="every 5s" hx-swap="outerHTML" aria-live="polite">${cards || '<div class="empty-state"><h2>No active devices</h2></div>'}${disabledPanel}${toggleScript}</section>`);
-        });
+        app.get('/assets/styles.css', asset('text/css', pages.styles));
+        app.get('/assets/index.js', asset('text/javascript', pages.indexScript));
+        app.get('/assets/device.js', asset('text/javascript', pages.deviceScript));
+        app.get('/assets/register-device.js', asset('text/javascript', pages.registerDeviceScript));
+        app.get('/assets/htmx.min.js', asset('text/javascript', pages.htmx));
         app.get<{ Params: { udid: string } }>('/api/devices/:udid/fragments/summary', async (request, reply) => {
-            const device = (await discoverConnectedDevices()).find(({ udid }) => udid === request.params.udid);
+            const device = (await discover()).find(({ udid }) => udid === request.params.udid);
             if (!device) return reply.type('text/html').send('<section id="device-summary" class="device-summary error"><div><h2>Device disconnected</h2></div></section>');
             const screen = await remote.getScreenInfo(device.udid);
             return reply.type('text/html').send(`<section id="device-summary" class="device-summary" data-screen-width="${screen.screenSize.width}" data-screen-height="${screen.screenSize.height}"><div><span class="eyebrow">Connected device</span><h1>${escapeHtml(device.name)}</h1><p>iOS ${escapeHtml(device.osVersion)} · ${screen.screenSize.width} × ${screen.screenSize.height} points · ${screen.scale}×</p></div><code>${escapeHtml(device.udid)}</code></section>`);
         });
-        app.get<{ Params: { udid: string } }>('/api/devices/:udid/fragments/activity', async (request, reply) => {
-            return reply.type('text/html').send(await renderActivity(request.params.udid));
+        app.get('/', async (_request, reply) => reply.type('text/html').send(pages.indexHtml));
+        app.get('/devices/register', async (_request, reply) => reply.type('text/html').send(pages.registerDeviceHtml));
+        app.get<{ Params: { udid: string } }>('/devices/:udid', async (request, reply) => {
+            const device: RegisteredDevice | undefined = await findRegistered(request.params.udid);
+            if (!device) return reply.code(404).type('text/html').send('<!doctype html><title>Not found</title><p>Device not found. <a href="/">Back</a></p>');
+            return reply.type('text/html').send(pages.deviceHtml
+                .replaceAll('__DEVICE_UDID__', encodeURIComponent(device.udid))
+                .replaceAll('__DEVICE_HASPASSCODE__', device.passcode ? '· set' : '· not set'));
         });
     }
-
-    app.get('/', async (_request, reply) => {
-        if (themed) return reply.type('text/html').send(themed.indexHtml);
-        const devices = await registeredWithStatus();
-        const cards = devices.map((device) => `<div class="card"><h2>${escapeHtml(device.name)}</h2><p class="muted"><code>${escapeHtml(device.udid)}</code></p><p>${device.disabled ? 'Disconnected' : device.connected ? `Online · iOS ${escapeHtml(device.connected.osVersion)}` : 'Offline'}</p><a class="button" href="/devices/${encodeURIComponent(device.udid)}">Open device</a></div>`).join('');
-        const connected = await discoverConnectedDevices();
-        const registeredIds = new Set(devices.map(({ udid }) => udid));
-        const candidates = connected.filter(({ udid }) => !registeredIds.has(udid)).map((device) => `<option value="${escapeHtml(device.udid)}" data-name="${escapeHtml(device.name)}">${escapeHtml(device.name)} · ${escapeHtml(device.osVersion)}</option>`).join('');
-        const registration = candidates ? `<section class="card"><h2>Register connected device</h2><form id="register-device"><select name="udid">${candidates}</select> <button>Register</button></form><p id="register-result" class="muted"></p><script>document.getElementById('register-device').addEventListener('submit',async function(e){e.preventDefault();var s=e.currentTarget.udid;var o=s.options[s.selectedIndex];var r=await fetch('/api/devices',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({udid:o.value,name:o.dataset.name,pluginData:{}})});document.getElementById('register-result').textContent=r.ok?'Registered. Reloading…':(await r.json()).error;if(r.ok)setTimeout(function(){location.reload()},500)});</script></section>` : '';
-        return reply.type('text/html').send(renderPage('Devices', `<h1>Devices</h1>${registration}<div class="grid">${cards || '<p>No devices registered.</p>'}</div>`));
-    });
-    app.get('/devices/register', async (_request, reply) => {
-        if (!themed) return reply.type('text/html').send(renderPage('Register device', '<h1>Register device</h1><p>Use <code>POST /api/device-registrations</code> to start device setup.</p>'));
-        return reply.type('text/html').send(themed.registerDeviceHtml);
-    });
-    app.get<{ Params: { udid: string } }>('/devices/:udid', async (request, reply) => {
-        const device = (await loadRegisteredDevices()).find(({ udid }) => udid === request.params.udid);
-        if (!device) return reply.code(404).type('text/html').send(renderPage('Not found', '<h1>Device not found</h1>'));
-        if (themed) {
-            const rendered = options.dashboardTheme?.renderDevice
-                ? options.dashboardTheme.renderDevice(themed.deviceHtml, device) : themed.deviceHtml;
-            return reply.type('text/html').send(rendered.replaceAll('__DEVICE_UDID__', encodeURIComponent(device.udid)));
-        }
-        const schedules = await options.scheduler.listSchedules(50, device.udid);
-        const executions = await options.scheduler.listExecutions(50, device.udid);
-        const panels: string[] = [];
-        for (const plugin of options.plugins.list()) {
-            for (const panel of [...(plugin.devicePanels ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
-                try {
-                    panels.push(`<section class="card" data-plugin="${escapeHtml(plugin.id)}"><h2>${escapeHtml(panel.title)}</h2>${await readFile(panel.fragmentPath, 'utf8')}</section>`);
-                } catch (error) {
-                    panels.push(`<section class="card"><h2>${escapeHtml(panel.title)}</h2><p>Panel unavailable: ${escapeHtml(errorMessage(error))}</p></section>`);
-                }
-            }
-        }
-        const scheduleRows = schedules.map((item) => `<tr><td>${escapeHtml(item.pluginId)}/${escapeHtml(item.taskType)}</td><td>${escapeHtml(JSON.stringify(item.timing))}<br><span class="muted">Next: ${escapeHtml(item.nextRunAt?.toISOString() ?? '—')}</span></td><td>${escapeHtml(item.status)}</td><td>${item.status === 'active' ? `<button data-schedule="${item.id}" data-status="paused">Pause</button>` : item.status === 'paused' ? `<button data-schedule="${item.id}" data-status="active">Resume</button>` : ''} ${!['cancelled', 'completed'].includes(item.status) ? `<button data-schedule="${item.id}" data-status="cancelled">Cancel</button>` : ''}</td></tr>`).join('');
-        const executionRows = executions.map((item) => `<tr><td>${escapeHtml(item.pluginId)}/${escapeHtml(item.taskType)}</td><td>${escapeHtml(item.status)}<br><span class="muted">${escapeHtml(item.scheduledFor.toISOString())}</span></td><td><a href="/api/executions/${item.id}"><code>${escapeHtml(item.id)}</code></a></td><td>${['queued', 'running'].includes(item.status) ? `<button data-stop="${item.id}">Stop</button>` : ['failed', 'stopped'].includes(item.status) ? `<button data-retry="${item.id}">Retry</button>` : ''}</td></tr>`).join('');
-        const udidJs = encodeURIComponent(device.udid);
-        const passcodeCard = `<section class="card"><h2>Unlock passcode</h2><p class="muted">${device.passcode ? 'A passcode is set.' : 'No passcode set.'} Stored in devices.json, never shown.</p><form id="pc"><input id="pcv" type="password" inputmode="numeric" placeholder="4+ digits" autocomplete="new-password"> <button class="button secondary">Save</button> <button type="button" id="pcc" class="button secondary">Clear</button> <span id="pcr" class="muted"></span></form></section><script>(function(){var f=document.getElementById('pc'),v=document.getElementById('pcv'),r=document.getElementById('pcr');async function set(p){r.textContent='…';var x=await fetch('/api/devices/${udidJs}',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({passcode:p})});if(x.ok){r.textContent=p?'Saved.':'Cleared.';v.value=''}else{r.textContent=((await x.json().catch(function(){return{}})).error)||'Failed'}}f.addEventListener('submit',function(e){e.preventDefault();if(!/^\\d{4,}$/.test(v.value.trim())){r.textContent='4+ digits';return}set(v.value.trim())});document.getElementById('pcc').addEventListener('click',function(){if(confirm('Clear passcode?'))set('')})})();</script>`;
-        const controls = `<script>document.addEventListener('click',async function(e){var b=e.target.closest('button');if(!b)return;var url,body,method='POST';if(b.dataset.schedule){url='/api/schedules/'+b.dataset.schedule+'/status';body={status:b.dataset.status}}else if(b.dataset.stop){url='/api/executions/'+b.dataset.stop+'/stop'}else if(b.dataset.retry){url='/api/executions/'+b.dataset.retry+'/retry'}else if(b.dataset.remove){if(!confirm('Remove this device? Its schedules will be cancelled.'))return;url='/api/devices/'+encodeURIComponent(b.dataset.remove);method='DELETE'}else{return}b.disabled=true;var r=await fetch(url,{method:method,headers:{'content-type':'application/json'},body:body?JSON.stringify(body):'{}'});if(r.ok){location.href=b.dataset.remove?'/':location.href;if(!b.dataset.remove)location.reload()}else{b.disabled=false;alert((await r.json().catch(function(){return{}})).error||'Request failed')}});</script>`;
-        return reply.type('text/html').send(renderPage(device.name, `<h1>${escapeHtml(device.name)}</h1><p><code>${escapeHtml(device.udid)}</code></p>${panels.join('')}<section class="card"><h2>Scheduled and recurring jobs</h2><table><tr><th>Task</th><th>Timing</th><th>Status</th><th>Actions</th></tr>${scheduleRows || '<tr><td colspan="4">No schedules.</td></tr>'}</table></section><section class="card"><h2>Execution history</h2><table><tr><th>Task</th><th>Status</th><th>ID/logs</th><th>Actions</th></tr>${executionRows || '<tr><td colspan="4">No executions.</td></tr>'}</table></section>${passcodeCard}<section class="card"><h2>Danger zone</h2><p class="muted">Removing a device cancels its schedules and forgets its configuration. WebDriverAgent stays installed on the phone.</p><button data-remove="${escapeHtml(device.udid)}" class="button secondary">Remove device</button></section>${controls}`));
-    });
-    app.get('/tasks', async (_request, reply) => reply.type('text/html').send(
-        themed?.tasksHtml ?? renderPage('Tasks', '<h1>Tasks</h1><p>The JSON API exposes schedules and execution history. Installed plugins add task forms to each device page.</p>'),
-    ));
-    app.get('/docs', async (_request, reply) => reply.type('text/html').send(renderPage('API', '<h1>API</h1><p>Use <code>/api/plugins</code>, <code>/api/devices</code>, <code>/api/schedules</code>, and <code>/api/executions</code>. This route follows the configured authentication policy.</p>')));
 
     app.setErrorHandler((error, request, reply) => {
         request.log.error(error);

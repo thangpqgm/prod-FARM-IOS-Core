@@ -1,8 +1,10 @@
 import { remote, type Browser } from 'webdriverio';
 
-import { loadRegisteredDevices, resolveDeviceCoordinates, WdaRemoteControl } from '@git-agni/phone-farm-core';
+import { resolveDeviceCoordinates } from '../devices/coordinates.js';
+import { loadRegisteredDevices } from '../devices/registry.js';
+import { WdaRemoteControl } from '../devices/wda-remote.js';
 import { coordinateProfile, registeredAccounts } from './runtime-settings.js';
-import { switchTikTokAccount, tapCoordinate } from './actions.js';
+import { doubleTapCoordinate, switchTikTokAccount, tapCoordinate } from './actions.js';
 import { detectEngagementControls } from './engagement-controls.js';
 import {
     PROFILES,
@@ -146,14 +148,6 @@ function cancellableDelay(ms: number): Promise<void> {
 
 function interactionPauseMs(): number {
     return Math.round(200 + Math.random() * 400);
-}
-
-async function doubleTapCoordinate(driver: Browser, x: number, y: number, label: string): Promise<void> {
-    await tapCoordinate(driver, x, y, label);
-    // Short, fixed gap so TikTok's gesture recognizer reads this as a
-    // double-tap-to-like rather than two separate taps.
-    await driver.pause(130);
-    await tapCoordinate(driver, x, y, label);
 }
 
 let driver: Browser | undefined;

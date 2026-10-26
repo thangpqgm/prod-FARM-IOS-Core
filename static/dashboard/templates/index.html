@@ -1,32 +1,45 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>iOS Automation · Handler</title>
+    <title>Phone Farm</title>
     <link rel="stylesheet" href="/assets/styles.css">
-    <script src="/assets/htmx.min.js" defer></script>
+    <script type="module" src="/assets/index.js"></script>
 </head>
 <body>
     <header class="topbar">
         <div class="topbar-inner">
-            <div class="brand">
-                <a class="brand-name" href="/">iOS Farm</a>
-                <a class="brand-by" href="https://gethandler.ai" target="_blank" rel="noopener">by Handler</a>
-            </div>
-            <nav class="topbar-nav"><a class="button primary" href="/devices/register">Register device</a><a class="button secondary" href="/tasks">Tasks</a><button class="button secondary" type="button" hx-get="/api/fragments/devices" hx-target="#device-list" hx-swap="outerHTML">Refresh</button>__PLUGIN_NAV____AUTH_NAV__</nav>
+            <div class="brand"><a class="brand-name" href="/">Phone Farm</a><span class="brand-by">nuôi acc TikTok theo niche</span></div>
+            <nav class="topbar-nav">
+                <a class="button secondary" href="/devices/register">Đăng ký máy</a>
+                <button id="refresh" class="button secondary" type="button">↻ Quét lại</button>
+            </nav>
         </div>
     </header>
     <main class="shell">
-        <header class="page-header">
-            <div>
-                <span class="eyebrow">Automation workspace</span>
-                <h1>Devices</h1>
-                <p>Choose a connected iPhone to control it or run automation.</p>
+        <section class="farm-section">
+            <div class="section-heading">
+                <div><span class="eyebrow">Thiết bị</span><h2>Máy đang cắm <span id="device-count" class="count"></span></h2></div>
             </div>
-        </header>
-        <section id="device-list" class="device-list" hx-get="/api/fragments/devices" hx-trigger="load" hx-swap="outerHTML" aria-live="polite">
-            <div class="loading-card"><span class="spinner" aria-hidden="true"></span>Looking for connected devices…</div>
+            <div id="devices" class="farm-devices" aria-live="polite">
+                <div class="loading-card"><span class="spinner" aria-hidden="true"></span>Đang tìm máy…</div>
+            </div>
+            <p class="hint">Bấm vào một máy để xem màn hình, điều khiển, đặt passcode và căn tọa độ nút (kể cả nút search).</p>
+        </section>
+
+        <section class="farm-section">
+            <div class="section-heading">
+                <div><span class="eyebrow">Nuôi theo niche</span><h2>Tài khoản <span id="account-count" class="count"></span></h2></div>
+                <button id="add-account" class="button primary" type="button">+ Thêm acc</button>
+            </div>
+            <p id="page-error" class="run-error" hidden></p>
+            <div class="account-table-wrap">
+                <table class="account-table">
+                    <thead><tr><th>Acc</th><th>Máy</th><th>Niche (keywords)</th><th>Giờ chạy</th><th>Lần cuối</th><th></th></tr></thead>
+                    <tbody id="accounts"><tr><td colspan="6" class="muted-cell">Đang tải…</td></tr></tbody>
+                </table>
+            </div>
         </section>
     </main>
     <footer class="app-footer">__FOOTER__</footer>

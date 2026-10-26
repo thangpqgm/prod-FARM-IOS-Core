@@ -40,6 +40,9 @@ export interface DeviceCoordinates {
         finish: Point;
         like: Point;
         save: Point;
+        searchIcon: Point;
+        searchVideosTab: Point;
+        searchFirstResult: Point;
         swipe: {
             x: number;
             startY: number;
@@ -88,6 +91,11 @@ export const DEVICE_COORDINATES = {
             finish: { x: 277, y: 630 },
             like: { x: 345, y: 313 },
             save: { x: 345, y: 444 },
+            // Search points are layout estimates, not yet confirmed on a real
+            // iPhone 8 — calibrate them from the device page before relying on them.
+            searchIcon: { x: 348, y: 42 },
+            searchVideosTab: { x: 118, y: 100 },
+            searchFirstResult: { x: 94, y: 250 },
             swipe: { x: 187, startY: 550, endY: 150, durationMs: 450 },
         },
     },
@@ -136,6 +144,7 @@ export function coordinatesForProfile(profile: string = DEFAULT_COORDINATE_PROFI
 export const CALIBRATABLE_POINTS = [
     'profileTab', 'homeTab', 'accountSwitcher', 'create', 'upload', 'selectMultiple', 'useLayout',
     'pickerNext', 'editorNext', 'caption', 'keyboardBack', 'draft', 'finish', 'like', 'save',
+    'searchIcon', 'searchVideosTab', 'searchFirstResult',
 ] as const;
 
 export type CalibratablePoint = typeof CALIBRATABLE_POINTS[number];
@@ -146,6 +155,8 @@ export const POINT_LABELS: Record<CalibratablePoint, string> = {
     pickerNext: 'TikTok: Media picker · Next', editorNext: 'TikTok: Editor · Next', caption: 'TikTok: Caption field',
     keyboardBack: 'TikTok: Keyboard · back', draft: 'TikTok: Save draft', finish: 'TikTok: Post / Finish',
     like: 'TikTok: Like button', save: 'TikTok: Save/bookmark button',
+    searchIcon: 'TikTok: Search icon (Home)', searchVideosTab: 'TikTok: Search results · Videos tab',
+    searchFirstResult: 'TikTok: Search results · first video',
 };
 
 /** Per-device overrides for the calibratable points, stored on the devices.json entry. */

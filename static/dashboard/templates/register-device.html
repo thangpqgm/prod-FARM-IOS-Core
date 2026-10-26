@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Register device · Handler</title>
+    <title>Register device · Phone Farm</title>
     <link rel="stylesheet" href="/assets/styles.css">
     <script type="module" src="/assets/register-device.js"></script>
 </head>
@@ -11,10 +11,10 @@
     <header class="topbar">
         <div class="topbar-inner">
             <div class="brand">
-                <a class="brand-name" href="/">iOS Farm</a>
-                <a class="brand-by" href="https://gethandler.ai" target="_blank" rel="noopener">by Handler</a>
+                <a class="brand-name" href="/">Phone Farm</a>
+                <span class="brand-by">nuôi acc TikTok theo niche</span>
             </div>
-            <nav class="topbar-nav"><a class="button secondary" href="/">Back to devices</a>__PLUGIN_NAV____AUTH_NAV__</nav>
+            <nav class="topbar-nav"><a class="button secondary" href="/">Back to devices</a></nav>
         </div>
     </header>
     <main class="shell registration-shell">
@@ -35,7 +35,7 @@
             <form id="registration-details" class="registration-form">
                 <label>Device name<input id="registration-name" name="name" required maxlength="100"></label>
                 <label>Coordinate profile <span class="field-help">The detected model is recommended automatically; you may override it.</span><select id="registration-profile" name="coordinateProfile" required><option value="">Detecting model</option></select></label>
-                <label class="wide">TikTok accounts <span class="field-help">Optional. Add comma-separated signed-in handles now, or manage them later from the device page.</span><input id="registration-accounts" name="accounts" placeholder="@account_one, @account_two"></label>
+                <label class="wide">TikTok accounts <span class="field-help">Optional — only verifies the handles are signed in. Add accounts and their niche keywords on the main page.</span><input id="registration-accounts" name="accounts" placeholder="@account_one, @account_two"></label>
                 <label class="wide">Unlock passcode <span class="field-help">Optional; stored only in the git-ignored owner-readable devices.json file, never returned by the API.</span><input id="registration-passcode" name="passcode" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,}"></label>
                 <div class="wide inline-actions"><button class="button secondary" type="submit">Save details</button><span id="registration-ports" class="run-meta"></span></div>
             </form>

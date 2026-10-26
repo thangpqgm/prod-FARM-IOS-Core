@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>iPhone · Handler</title>
+    <title>iPhone · Phone Farm</title>
     <link rel="stylesheet" href="/assets/styles.css">
     <script src="/assets/htmx.min.js" defer></script>
 </head>
@@ -11,18 +11,14 @@
     <header class="topbar">
         <div class="topbar-inner">
             <div class="brand">
-                <a class="brand-name" href="/">iOS Farm</a>
-                <a class="brand-by" href="https://gethandler.ai" target="_blank" rel="noopener">by Handler</a>
+                <a class="brand-name" href="/">Phone Farm</a>
+                <span class="brand-by">nuôi acc TikTok theo niche</span>
             </div>
             <nav class="topbar-nav">
-                <a class="crumb" href="/">Devices</a>
-                <a class="crumb" href="/tasks">Tasks</a>
-                <button id="open-tasks" class="button secondary" type="button">Tasks &amp; schedules</button>
-                <button id="open-accounts" class="button secondary" type="button">Accounts</button>
+                <a class="crumb" href="/">← Danh sách</a>
                 <button id="open-passcode" class="button secondary" type="button">Passcode</button>
                 <button id="open-calibrate" class="button secondary" type="button">Touch points</button>
                 <button id="open-remove" class="button danger" type="button">Remove device</button>
-                __PLUGIN_NAV____AUTH_NAV__
             </nav>
         </div>
     </header>
@@ -61,56 +57,20 @@
                     </div>
                 </div>
                 <div id="status" class="stream-status"><span class="dot"></span><span>Waiting for device details…</span></div>
-                <p class="hint">Click to tap and drag to swipe. Remote input pauses while a doomscroll session is running.</p>
+                <p class="hint">Click to tap and drag to swipe. Remote input pauses while a nurture session is running.</p>
             </section>
             <div class="action-stack">
                 <section class="panel">
                     <div class="section-heading">
-                        <div><span class="eyebrow">TikTok</span><h2>Doomscroll</h2></div>
-                        <button id="open-doomscroll" class="button secondary" type="button">Configure</button>
+                        <div><span class="eyebrow">Nuôi theo niche</span><h2>Acc trên máy này</h2></div>
+                        <a class="button secondary" href="/">Sửa ở trang chính</a>
                     </div>
-                    <p>Run a timed, personality-driven doomscrolling session on this device.</p>
-                </section>
-                <section class="panel post-card">
-                    <div><span class="eyebrow">TikTok</span><h2>Create a post</h2></div>
-                    <p>Upload a video or ordered slideshow, then save it as a draft or publish it.</p>
-                    <button id="open-post" class="button secondary" type="button">Prepare post</button>
-                </section>
-                <section class="panel activity-card">
-                    <div><span class="eyebrow">Device activity</span><h2>Automation log</h2></div>
-                    <p>Live output from the latest doomscroll or post automation on this device.</p>
-                    <section id="device-activity" class="run-panel loading-card"
-                        hx-get="/api/devices/__DEVICE_UDID__/fragments/activity" hx-trigger="load" hx-swap="outerHTML">
-                        <span class="spinner" aria-hidden="true"></span>Loading recent activity…
-                    </section>
+                    <ul id="device-accounts" class="device-account-list"><li class="muted">Đang tải…</li></ul>
+                    <p class="hint">Trước lần nuôi đầu tiên, mở <strong>Touch points</strong> và căn lại 3 điểm search (icon search, tab Videos, video đầu tiên) cho đúng máy.</p>
                 </section>
             </div>
         </div>
     </main>
-    <dialog id="tasks-dialog">
-        <div class="modal tasks-modal">
-            <div class="modal-head">
-                <div><span class="eyebrow">This device</span><h2>Tasks &amp; schedules</h2></div>
-                <div class="inline-actions"><a href="/tasks" class="button secondary">View all tasks</a><button id="close-tasks" class="icon-button" type="button">Close</button></div>
-            </div>
-            <h3>Schedules</h3>
-            <div id="device-schedules" class="task-list loading-card"><span class="spinner" aria-hidden="true"></span>Loading schedules…</div>
-            <h3>Recent runs</h3>
-            <div id="device-executions" class="task-list loading-card"><span class="spinner" aria-hidden="true"></span>Loading task history…</div>
-        </div>
-    </dialog>
-    <dialog id="accounts-dialog">
-        <form id="accounts-form" class="modal">
-            <div class="modal-head">
-                <div><span class="eyebrow">TikTok</span><h2>Accounts</h2></div>
-                <button id="close-accounts" class="icon-button" type="button">Close</button>
-            </div>
-            <p>Handles already signed in on this device. Leave empty to use only the currently active account.</p>
-            <label for="device-accounts">Account handles</label>
-            <input id="device-accounts" type="text" value="__TIKTOK_ACCOUNTS_VALUE__" placeholder="@account_one, @account_two">
-            <div class="form-actions"><span id="accounts-result" class="run-meta" aria-live="polite"></span><span class="spacer"></span><button class="button primary" type="submit">Save accounts</button></div>
-        </form>
-    </dialog>
     <dialog id="passcode-dialog">
         <form id="passcode-form" class="modal" autocomplete="off">
             <div class="modal-head">
@@ -133,7 +93,7 @@
                 <div><span class="eyebrow">This device</span><h2>Remove device</h2></div>
                 <button id="close-remove" class="icon-button" type="button">Close</button>
             </div>
-            <p>This cancels every schedule for the device and forgets its configuration (passcode, accounts, touch points). WebDriverAgent stays installed on the phone.</p>
+            <p>This forgets the device configuration (passcode, touch points). Remove or move its TikTok accounts first. WebDriverAgent stays installed on the phone.</p>
             <div class="form-actions">
                 <span id="remove-result" class="run-meta" aria-live="polite"></span><span class="spacer"></span>
                 <button id="remove-device" class="button danger" type="button">Remove device</button>
@@ -162,106 +122,6 @@
                 <button id="cal-cancel" class="button secondary" type="button">Cancel</button>
                 <button id="cal-save" class="button primary" type="button">Save</button>
             </div>
-        </form>
-    </dialog>
-    <dialog id="doomscroll-dialog">
-        <form id="doomscroll-form" class="modal" hx-post="/api/devices/__DEVICE_UDID__/fragments/scroll-run"
-            hx-target="#device-activity" hx-swap="outerHTML" hx-disabled-elt="button">
-            <div class="modal-head">
-                <div><span class="eyebrow">TikTok</span><h2>Configure doomscroll</h2></div>
-                <button id="close-doomscroll" class="icon-button" type="button">Close</button>
-            </div>
-            <p>Run a timed, personality-driven doomscrolling session on this device.</p>
-            <label for="doomscroll-duration">Duration (minutes)</label>
-            <input id="doomscroll-duration" name="durationMinutes" type="number" min="1" max="180" value="5" required>
-            <div class="duration-shortcuts">
-                <button type="button" data-doomscroll-duration="1">1 min</button>
-                <button type="button" data-doomscroll-duration="5">5 min</button>
-                <button type="button" data-doomscroll-duration="15">15 min</button>
-            </div>
-            <label for="doomscroll-personality">Personality</label>
-            <select id="doomscroll-personality" name="personality">
-                <option value="skimmer">Skimmer</option>
-                <option value="casual" selected>Casual</option>
-                <option value="engaged">Engaged</option>
-            </select>
-            <label for="doomscroll-account">TikTok account</label>
-            <select id="doomscroll-account" name="account">
-                <option value="">Don't switch</option>__TIKTOK_ACCOUNT_OPTIONS__
-            </select>
-            <fieldset><legend>Engagement</legend><div class="choices">
-                <label><input type="checkbox" name="likeEnabled" checked> Like videos</label>
-                <label><input type="checkbox" name="saveEnabled" checked> Save videos</label>
-            </div></fieldset>
-            <label class="checkbox-option"><input id="doomscroll-recurring" type="checkbox"> Recurring</label>
-            <div id="doomscroll-start-options" class="field">
-                <label for="doomscroll-start-kind">Start</label>
-                <select id="doomscroll-start-kind"><option value="now">Now</option><option value="once">Once</option></select>
-            </div>
-            <div id="doomscroll-once-fields" class="schedule-fields" hidden>
-                <div class="field"><label for="doomscroll-run-at">One-time date and time</label><input id="doomscroll-run-at" type="datetime-local"></div>
-            </div>
-            <div id="doomscroll-recurring-fields" class="schedule-fields" hidden>
-                <div class="field"><label for="doomscroll-frequency">Repeat</label><select id="doomscroll-frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option></select></div>
-                <div class="field"><label for="doomscroll-local-time">Time</label><input id="doomscroll-local-time" name="localTime" type="time" value="09:00"></div>
-                <fieldset id="doomscroll-weekday-fields" class="weekday-field" hidden><legend>Days</legend><div class="weekday-options">
-                    <label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label>
-                    <label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label>
-                    <label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label>
-                    <label><input type="checkbox" value="0"><span>Sun</span></label>
-                </div></fieldset>
-            </div>
-            <div id="doomscroll-run-window-field" class="field schedule-window" hidden><label for="doomscroll-run-window">Run window (minutes)</label><input id="doomscroll-run-window" name="runWindowMinutes" type="number" min="1" max="1440" value="30"></div>
-            <input id="doomscroll-schedule-kind" name="scheduleKind" type="hidden" value="now"><input id="doomscroll-weekdays" name="weekdays" type="hidden" value="1,2,3,4,5">
-            <input id="doomscroll-run-at-iso" name="runAt" type="hidden"><input class="browser-timezone" name="timezone" type="hidden">
-            <p class="warning">Save uses a blind bookmark toggle — there is no reliable way to detect whether a video is already saved, so this may unsave one.</p>
-            <div class="form-actions">
-                <button id="cancel-doomscroll" class="button secondary" type="button">Cancel</button>
-                <button class="button primary" type="submit">Start doomscroll</button>
-            </div>
-        </form>
-    </dialog>
-    <dialog id="post-dialog">
-        <form id="post-form" class="modal">
-            <div class="modal-head"><div><span class="eyebrow">TikTok</span><h2>Create post</h2></div><button id="close-post" class="icon-button" type="button">Close</button></div>
-            <p>Choose one video or up to three slideshow images. Reorder images before starting.</p>
-            <label for="media">Media</label>
-            <input id="media" name="media-picker" type="file" accept="video/*,image/*" multiple required>
-            <ol id="media-list"></ol>
-            <label for="music-url">TikTok music URL <small>(optional)</small></label>
-            <input id="music-url" type="url" placeholder="https://www.tiktok.com/music/…">
-            <label for="caption">Caption <small>(optional)</small></label>
-            <textarea id="caption" maxlength="2200" placeholder="Write a caption…"></textarea>
-            <label for="post-account">TikTok account</label>
-            <select id="post-account" name="account" required>
-                <option value="" disabled selected>Choose an account…</option>__TIKTOK_ACCOUNT_OPTIONS__
-            </select>
-            <fieldset><legend>Finish as</legend><div class="choices">
-                <label><input type="radio" name="destination" value="draft" checked> Save to Drafts</label>
-                <label><input type="radio" name="destination" value="publish"> Post publicly</label>
-            </div></fieldset>
-            <label class="checkbox-option"><input id="post-recurring" type="checkbox"> Recurring</label>
-            <div id="post-start-options" class="field">
-                <label for="post-start-kind">Start</label>
-                <select id="post-start-kind"><option value="now">Now</option><option value="once">Once</option></select>
-            </div>
-            <div id="post-once-fields" class="schedule-fields" hidden>
-                <div class="field"><label for="post-run-at">One-time date and time</label><input id="post-run-at" type="datetime-local"></div>
-            </div>
-            <div id="post-recurring-fields" class="schedule-fields" hidden>
-                <div class="field"><label for="post-frequency">Repeat</label><select id="post-frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option></select></div>
-                <div class="field"><label for="post-local-time">Time</label><input id="post-local-time" type="time" value="09:00"></div>
-                <fieldset id="post-weekday-fields" class="weekday-field" hidden><legend>Days</legend><div class="weekday-options">
-                    <label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label>
-                    <label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label>
-                    <label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label>
-                    <label><input type="checkbox" value="0"><span>Sun</span></label>
-                </div></fieldset>
-            </div>
-            <div id="post-run-window-field" class="field schedule-window" hidden><label for="post-run-window">Run window (minutes)</label><input id="post-run-window" type="number" min="1" max="1440" value="30"></div>
-            <div id="publish-confirm" class="publish-confirm"><label><input id="confirm-publish" type="checkbox"> I understand this will publish to the signed-in TikTok account.</label></div>
-            <p id="post-result" aria-live="polite"></p>
-            <div class="form-actions"><button id="cancel-post" class="button secondary" type="button">Cancel</button><button id="submit-post" class="button primary" type="submit">Save to Drafts</button></div>
         </form>
     </dialog>
     <script type="module" src="/assets/device.js"></script>
