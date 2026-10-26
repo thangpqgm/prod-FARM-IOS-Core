@@ -1,4 +1,4 @@
-import type { DeviceIdentity } from '@git-agni/phone-farm-core';
+import type { DeviceIdentity } from '../types.js';
 
 export interface PostManifest {
     device: DeviceIdentity;

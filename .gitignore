@@ -8,3 +8,7 @@ devices.json
 .scheduler-data/
 static/assets/
 *.log
+farm.db
+farm.db-*
+logs/
+.appium2/

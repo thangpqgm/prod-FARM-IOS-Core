@@ -1,4 +1,5 @@
-import type { JsonObject, RegisteredDevice } from '@git-agni/phone-farm-core';
+import type { RegisteredDevice } from '../devices/registry.js';
+import type { JsonObject } from '../types.js';
 
 export const TIKTOK_PLUGIN_ID = 'com.git-agni.tiktok';
 

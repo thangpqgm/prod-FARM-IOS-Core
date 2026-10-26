@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Browser } from 'webdriverio';
 
-import type { WdaRemoteControl } from '@git-agni/phone-farm-core';
+import type { WdaRemoteControl } from '../devices/wda-remote.js';
 import { findHandleMatch, pointFromWord, recognizeWords, type OcrWord } from './ocr.js';
 
 export async function tapCoordinate(driver: Browser, x: number, y: number, label: string): Promise<void> {
@@ -19,6 +19,27 @@ export async function tapCoordinate(driver: Browser, x: number, y: number, label
     }]);
     await driver.releaseActions();
     console.log(`Tapped ${label} at (${x}, ${y})`);
+}
+
+export async function doubleTapCoordinate(driver: Browser, x: number, y: number, label: string): Promise<void> {
+    await tapCoordinate(driver, x, y, label);
+    // Short, fixed gap so TikTok's gesture recognizer reads this as a
+    // double-tap-to-like rather than two separate taps.
+    await driver.pause(130);
+    await tapCoordinate(driver, x, y, label);
+}
+
+// Types into whatever field has focus. Goes straight to Appium's W3C keys
+// endpoint, the same way the caption is typed in post.ts.
+export async function typeText(driver: Browser, text: string): Promise<void> {
+    const appiumHost = process.env.APPIUM_HOST ?? '127.0.0.1';
+    const appiumPort = Number(process.env.APPIUM_PORT ?? 4725);
+    const response = await fetch(`http://${appiumHost}:${appiumPort}/session/${driver.sessionId}/keys`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ value: [text] }),
+    });
+    if (!response.ok) throw new Error(`Appium could not type text: ${await response.text()}`);
 }
 
 export interface AccountSwitchCoords {

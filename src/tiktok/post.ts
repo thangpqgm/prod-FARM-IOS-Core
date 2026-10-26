@@ -2,7 +2,11 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { remote, type Browser } from 'webdriverio';
 
-import { loadRegisteredDevices, resolveDeviceCoordinates, WdaRemoteControl } from '@git-agni/phone-farm-core';
+import { resolveDeviceCoordinates } from '../devices/coordinates.js';
+import { loadRegisteredDevices } from '../devices/registry.js';
+import { WdaRemoteControl } from '../devices/wda-remote.js';
+import { openDatabase } from '../db/client.js';
+import { FarmRepository } from '../db/repository.js';
 import type { PostManifest } from './post-manifest.js';
 import { type TikTokCoordinates } from './coordinates.js';
 import { coordinateProfile, registeredAccounts } from './runtime-settings.js';
@@ -188,11 +192,16 @@ const accountSwitchCoords = {
 };
 // Fail fast, before unlocking or launching TikTok, if the requested account
 // isn't one this device is registered for.
+// Accounts come from devices.json (registration wizard) or the farm database (dashboard).
+const handleKey = (handle: string) => handle.trim().replace(/^@+/, '').toLowerCase();
 const allowedAccounts = switchAccountName
-    ? registeredAccounts(registeredDevice)
+    ? [
+        ...registeredAccounts(registeredDevice),
+        ...new FarmRepository(openDatabase()).accountsOnDevice(manifest.device.udid).map(({ handle }) => handle),
+    ].map(handleKey)
     : [];
-if (switchAccountName && !allowedAccounts.includes(switchAccountName)) {
-    throw new Error(`TikTok account "${switchAccountName}" is not listed in devices.json for device ${manifest.device.udid}`);
+if (switchAccountName && !allowedAccounts.includes(handleKey(switchAccountName))) {
+    throw new Error(`TikTok account "${switchAccountName}" is not registered for device ${manifest.device.udid} (devices.json or the dashboard account list)`);
 }
 
 const deviceRemote = new WdaRemoteControl({

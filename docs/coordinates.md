@@ -13,8 +13,9 @@ A profile is a full set of tap targets for one screen geometry, in
 
 - `screenSize` — `{ width, height }` in points
 - `passcodeKeypad` — column x's and row y's for auto‑unlock
-- `tiktok` — every tap/swipe the built‑in TikTok plugin uses (tabs, create,
-  media picker grid, caption field, like/save, feed swipe, …)
+- `tiktok` — every tap/swipe the TikTok automation uses (tabs, search icon /
+  Videos tab / first result, create, media picker grid, caption field,
+  like/save, feed swipe, …)
 
 ```ts
 export const DEVICE_COORDINATES = {
@@ -62,7 +63,7 @@ screen geometry.
    their coordinates from this second, self‑contained copy so they can run as
    bare `tsx` scripts. Keep the two in sync.)
 
-3. `npm run typecheck && npm test`, redeploy `web` + `worker`, then set
+3. `npm run check`, restart `npm start`, then set
    `"coordinateProfile": "iphone13"` on the matching `devices.json` entries.
 
 ### Measuring coordinates
@@ -107,8 +108,3 @@ exists and every `devices.json` reference resolves. A JSON/env‑loaded profile
 source (validated at startup, same shape) would be a reasonable contribution.
 Until then, treat new device geometries as a small PR against
 `src/devices/coordinates.ts` + `src/tiktok/coordinates.ts`.
-
-A plugin **cannot** currently register its own coordinate profiles; the
-`tiktok` block is specific to the built‑in plugin. A third‑party plugin that
-needs screen‑relative taps should ship its own coordinate map inside the
-package and key it on `device.productType` or its own `pluginData`.

@@ -1,12 +1,10 @@
-import { inject } from './support.js';
+import { createTestApp, inject } from './support.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { PluginRegistry } from '../src/registry.js';
-import type { SchedulerRepository } from '../src/scheduler/repository.js';
 
 const configPath = path.join(await mkdtemp(path.join(os.tmpdir(), 'pf-coords-')), 'devices.json');
 process.env.DEVICES_CONFIG_PATH = configPath;
@@ -15,12 +13,10 @@ const seed = () => writeFile(configPath, JSON.stringify([
 ]));
 const onDisk = async () => JSON.parse(await readFile(configPath, 'utf8')) as Array<{ coordinates?: Record<string, unknown> }>;
 
-const scheduler = { async activeExecution() { return null; }, async listSchedules() { return []; } } as unknown as SchedulerRepository;
 
 test('calibrate: GET reports points, PATCH stores and clears overrides', async (context) => {
     await seed();
-    const { createApp } = await import('../src/api/app.js');
-    const app = await createApp({ plugins: new PluginRegistry([]), scheduler });
+    const { app } = await createTestApp();
     context.after(() => app.close());
 
     const list = await inject(app, { method: 'GET', url: '/api/devices/u1/coordinates' });

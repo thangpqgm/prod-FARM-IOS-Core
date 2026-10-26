@@ -1,0 +1,1 @@
+ALTER TABLE `accounts` ADD `warmup_minutes` integer DEFAULT 0 NOT NULL;
