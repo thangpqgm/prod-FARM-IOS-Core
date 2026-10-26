@@ -50,14 +50,14 @@ Lần đầu cho một máy:
 
 1. Cắm iPhone qua USB, mở khóa, chọn "Tin cậy máy tính này".
 2. **Đăng ký máy** trên dashboard. Trình hướng dẫn sẽ kiểm tra Xcode, quyền ký, Developer Mode và WDA.
-3. Vào trang của máy → **Touch points** và căn lại 3 điểm search: **icon search** trên Home, **tab Videos** trong kết quả, **video đầu tiên**. Tọa độ mặc định cho iPhone 8 mới là ước lượng, chưa đo trên máy thật.
+3. Để TikTok trên iPhone ở **giao diện tiếng Anh**. Bước search đọc nhãn tiếng Anh (`For You`, `Video`, `likes`); luồng này đã được đo trên TikTok 44.x tiếng Anh.
 4. Ở trang chính: **+ Thêm acc** → chọn máy, nhập `@acc` (phải đang đăng nhập trên máy đó), thêm keyword, đặt giờ chạy → **Lưu**.
 
 ### Một phiên nuôi diễn ra thế nào
 
 1. Mở khóa máy, mở TikTok, chuyển sang acc cần nuôi bằng OCR.
 2. Chọn ngẫu nhiên *N* keyword của acc (theo "Số keyword mỗi phiên").
-3. Với mỗi keyword: search → chọn tab Videos → mở video đầu tiên → lướt các video kết quả cho đến hết phần thời gian của keyword đó.
+3. Với mỗi keyword: mở lại TikTok → bấm kính lúp → gõ keyword → ở tab Top, mở ô **video** đầu tiên (đọc từ cây element) → lướt tiếp cho đến hết phần thời gian của keyword đó.
 4. Lướt For You thêm vài phút (đặt 0 để bỏ qua bước này).
 
 Mỗi video được ghi vào DB gồm caption, có khớp niche không, đã like/save chưa. Dashboard hiển thị tỉ lệ khớp niche của từng phiên.
@@ -125,7 +125,7 @@ Kiểm tra: `xcrun xctrace list devices` phải liệt kê iPhone trong mục "D
 | Hiện tượng | Cách xử lý |
 | --- | --- |
 | Phiên báo `WebDriverAgent is unavailable` | Máy chưa sẵn sàng. Mở trang máy xem trạng thái, xem `logs/wda-service.log`. |
-| `Every keyword search failed` | Căn lại 3 điểm search trong Touch points. Ảnh chụp lúc lỗi lưu ở `logs/session-<id>-search-*.png`. |
+| `Every keyword search failed` | Xem ảnh chụp lúc lỗi ở `logs/session-<id>-search-*.png`. Kiểm tra TikTok đang ở giao diện tiếng Anh và không có popup che màn hình. |
 | Không chuyển được acc | Acc phải đang đăng nhập trên máy và tên phải khớp đúng `@handle`. |
 | `wda: error … stale or corrupted` | Chạy lại `npm run wda:prepare`. Nếu vẫn lỗi, xóa `~/Library/Developer/Xcode/DerivedData/WebDriverAgent-*`. |
 | `wda: unlock-required` | Mở khóa iPhone bằng tay một lần, hoặc đặt passcode cho máy trên dashboard. |

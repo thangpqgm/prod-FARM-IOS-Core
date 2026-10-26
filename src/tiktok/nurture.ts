@@ -25,7 +25,7 @@ import {
 } from './doomscroll-profile.js';
 import { detectEngagementControls } from './engagement-controls.js';
 import { coordinateProfile } from './runtime-settings.js';
-import { openSearchResults } from './search.js';
+import { openSearchResults, relaunchTikTok, type SearchOptions } from './search.js';
 
 const repository = new FarmRepository(openDatabase());
 
@@ -106,15 +106,9 @@ const remoteControl = new WdaRemoteControl({
     passcodeKeypadLayout: coordinates.passcodeKeypad,
 });
 let driver: Browser | undefined;
+const searchOptions: SearchOptions = { bundleId: tiktokBundleId, pause: cancellableDelay };
 let like = tiktok.like;
 let save = tiktok.save;
-
-async function relaunchTikTok(activeDriver: Browser): Promise<void> {
-    // A fresh launch always lands on the Home feed, whatever screen we left.
-    await activeDriver.execute('mobile: terminateApp', { bundleId: tiktokBundleId });
-    await activeDriver.activateApp(tiktokBundleId);
-    await cancellableDelay(4000);
-}
 
 async function locateEngagementControls(): Promise<void> {
     try {
@@ -249,9 +243,8 @@ try {
     let searchFailures = 0;
     for (const keyword of keywords) {
         if (stopRequested) break;
-        await relaunchTikTok(driver);
         try {
-            await openSearchResults(driver, remoteControl, udid, keyword, tiktok);
+            await openSearchResults(driver, remoteControl, udid, keyword, searchOptions);
         } catch (error) {
             searchFailures += 1;
             const screenshot = await saveFailureScreenshot(`search-${searchFailures}`);
@@ -263,12 +256,12 @@ try {
         await scrollFeed(driver, keyword, Date.now() + perKeywordMs);
     }
     if (keywords.length > 0 && searchFailures === keywords.length) {
-        throw new Error('Every keyword search failed; calibrate the search touch points on the device page');
+        throw new Error('Every keyword search failed; see the search-*.png screenshots in the log folder');
     }
 
     if (!stopRequested && account.forYouMinutes > 0) {
         console.log('Checking the For You feed');
-        await relaunchTikTok(driver);
+        await relaunchTikTok(driver, searchOptions);
         await locateEngagementControls();
         await scrollFeed(driver, null, Date.now() + account.forYouMinutes * 60_000);
     }

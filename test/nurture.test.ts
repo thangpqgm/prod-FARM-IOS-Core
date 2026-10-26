@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { matchesNiche, nicheTerms, normalizeText, parseKeywordList } from '../src/nurture/niche.js';
 import { dueSlots, pickKeywords } from '../src/nurture/schedule.js';
-import { findVideosTab } from '../src/tiktok/search.js';
+import { isOnFeed, parsePageSource, pickResultCell, resultCells, searchIconPoint } from '../src/tiktok/search.js';
 
 test('normalizeText folds case, Vietnamese marks and hashtag symbols', () => {
     assert.equal(normalizeText('#Review Mỹ Phẩm'), 'review my pham');
@@ -43,11 +43,41 @@ test('dueSlots opens a slot at its time for the run window, including past midni
     assert.deepEqual(dueSlots(['bad', '25:00'], at(8, 0), 120), []);
 });
 
-test('findVideosTab only accepts the label in the tab row', () => {
-    const word = (text: string, y: number) => ({ text, x: 200, y, width: 80, height: 30, confidence: 90 });
-    const height = 1334;
-    assert.equal(findVideosTab([word('Videos', 900), word('Videos', 190)], height)?.y, 190);
-    assert.equal(findVideosTab([word('Video', 200)], height)?.text, 'Video');
-    assert.equal(findVideosTab([word('video', 800)], height), undefined, 'caption text lower down');
-    assert.equal(findVideosTab([word('Top', 190)], height), undefined);
+const RESULTS_SOURCE = `<?xml version="1.0" encoding="UTF-8"?>
+<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="TikTok" label="TikTok" enabled="true" visible="true" x="0" y="0" width="375" height="812">
+  <XCUIElementTypeSearchField type="XCUIElementTypeSearchField" value="glp1" label="" enabled="true" visible="true" x="40" y="50" width="280" height="36"/>
+  <XCUIElementTypeOther type="XCUIElementTypeOther" label="Week 3 on glp1 &amp; my &quot;results&quot;&#10;#weightloss. Photo. Oct 2. anna.fit. 1.2K likes." enabled="true" visible="true" x="8" y="180" width="176" height="330"/>
+  <XCUIElementTypeOther type="XCUIElementTypeOther" label="What I eat. Video. Top liked. 2025-9-14. coach.ben. Verified account. 15.5K likes." enabled="true" visible="true" x="191" y="180" width="176" height="330"/>
+  <XCUIElementTypeOther type="XCUIElementTypeOther" label="Hidden. Video. Oct 1. x. 3 likes." enabled="true" visible="false" x="8" y="900" width="176" height="330"/>
+  <XCUIElementTypeOther type="XCUIElementTypeOther" label="Below. Video. 3d ago. y. 12 likes." enabled="true" visible="true" x="8" y="520" width="176" height="330"/>
+  <XCUIElementTypeButton type="XCUIElementTypeButton" label="Top" enabled="true" visible="true" x="16" y="100" width="40" height="30"/>
+</XCUIElementTypeApplication>`;
+
+test('parsePageSource keeps visible elements and decodes XML entities', () => {
+    const elements = parsePageSource(RESULTS_SOURCE);
+    assert.equal(elements.some(({ label }) => label.startsWith('Hidden')), false);
+    assert.equal(elements.find(({ type }) => type === 'SearchField')?.width, 280);
+    assert.equal(elements.find(({ label }) => label.startsWith('Week 3'))?.label,
+        'Week 3 on glp1 & my "results"\n#weightloss. Photo. Oct 2. anna.fit. 1.2K likes.');
+});
+
+test('resultCells finds result tiles in reading order and pickResultCell prefers a video', () => {
+    const cells = resultCells(parsePageSource(RESULTS_SOURCE));
+    assert.deepEqual(cells.map(({ label }) => label.split('.')[0]), ['Week 3 on glp1 & my "results"\n#weightloss', 'What I eat', 'Below']);
+    assert.equal(pickResultCell(cells)?.label.startsWith('What I eat'), true, 'the top-left photo post is skipped');
+    assert.equal(pickResultCell(cells.slice(0, 1))?.label.startsWith('Week 3'), true, 'a photo only when no video');
+    assert.equal(pickResultCell([]), undefined);
+});
+
+test('searchIconPoint follows the measured notch / no-notch layouts', () => {
+    assert.deepEqual(searchIconPoint({ width: 375, height: 812 }), { x: 345, y: 67 });
+    assert.deepEqual(searchIconPoint({ width: 375, height: 667 }), { x: 345, y: 43 });
+});
+
+test('isOnFeed reads the For You / Following header near the top only', () => {
+    const word = (text: string, y: number) => ({ text, x: 100, y, width: 60, height: 30, confidence: 90 });
+    assert.equal(isOnFeed([word('For', 120), word('You', 120)], 3), true);
+    assert.equal(isOnFeed([word('Following', 150)], 3), true);
+    assert.equal(isOnFeed([word('Following', 900)], 3), false, 'lower on the screen is content, not the header');
+    assert.equal(isOnFeed([word('Search', 120)], 3), false);
 });
